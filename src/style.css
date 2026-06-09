@@ -580,6 +580,9 @@ details{
   background:#f9fafb;
 }
 summary{font-weight:1000;cursor:pointer}
+details.payment>summary{list-style:none;font-weight:400}
+details.payment>summary::-webkit-details-marker{display:none}
+details.payment>summary::marker{display:none}
 
 .config-accordion{display:grid;gap:16px;margin-top:18px}
 .config-section{

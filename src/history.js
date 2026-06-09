@@ -2,6 +2,12 @@ import { state } from './state.js'
 import { money, esc, norm, toast, openPhotoModal } from './ui.js'
 import { loadCloudClosures } from './supabase.js'
 
+function fmtDate(iso) {
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-')
+  return `${d}/${m}/${y}`
+}
+
 export function renderClosures() {
   const box = document.getElementById('closures')
   if (!box) return
@@ -24,16 +30,49 @@ export function renderClosures() {
     return
   }
 
-  box.innerHTML = list.map(c => buildCard(c)).join('')
+  // Sort all closures ascending to find previous troco for each card
+  const allSorted = state.closures
+    .filter(x => x.trocoFinal !== undefined && x.trocoFinal !== null)
+    .sort((a, b) => new Date(a.criado_em || a.data) - new Date(b.criado_em || b.data))
+
+  function getPrevTroco(c) {
+    const terminal = c.terminal || 'CAIXA'
+    const thisTime = new Date(c.criado_em || c.data).getTime()
+    const prev = allSorted
+      .filter(x =>
+        x.id !== c.id &&
+        (x.terminal || 'CAIXA') === terminal &&
+        new Date(x.criado_em || x.data).getTime() < thisTime
+      )
+      .pop()
+    return prev != null ? Number(prev.trocoFinal) : null
+  }
+
+  box.innerHTML = list.map(c => buildCard(c, getPrevTroco(c))).join('')
 }
 
-function buildCard(c) {
+function buildCard(c, prevTrocoFinal) {
   const hasAlerts = (c.alertas || []).length > 0
   const criadoEm = c.criado_em
-    ? new Date(c.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })
+    ? new Date(c.criado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : ''
+  const dataBR = fmtDate(c.data)
+
+  // ── Abertura diff vs previous troco ──
+  const aberturaDiff = prevTrocoFinal !== null
+    ? Math.round((Number(c.abertura || 0) - prevTrocoFinal) * 100) / 100
+    : null
+  const aberturaDiffHtml = aberturaDiff !== null && Math.abs(aberturaDiff) >= 0.01
+    ? aberturaDiff < 0
+      ? `<div style="font-size:11px;color:#dc2626;font-weight:700;margin-top:4px">
+           ▼ ${money(Math.abs(aberturaDiff))} a menos — esperado ${money(prevTrocoFinal)}
+         </div>`
+      : `<div style="font-size:11px;color:#d97706;font-weight:700;margin-top:4px">
+           ▲ ${money(aberturaDiff)} a mais — esperado ${money(prevTrocoFinal)}
+         </div>`
     : ''
 
-  // ── Abertura ──
+  // ── Abertura icon / status ──
   const aberturaIcon = c.aberturaOK === false
     ? `<span title="Divergência de abertura" style="color:#dc2626;font-size:15px;margin-left:5px">⚠</span>`
     : c.aberturaOK === true
@@ -104,11 +143,11 @@ function buildCard(c) {
             <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-start">
               ${f.preview
                 ? `<img src="${esc(f.preview)}" style="width:72px;height:72px;object-fit:cover;border-radius:10px;border:2px solid #e5e7eb;cursor:pointer"
-                     onclick="window.__history.openPhoto('${esc(f.url)}','${esc(f.nome || 'Foto ' + (i+1))}','${esc(c.data || '')}','${esc(c.operador || '')}')">` : ''}
+                     onclick="window.__history.openPhoto('${esc(f.url)}','${esc(f.nome || 'Foto ' + (i + 1))}','${esc(c.data || '')}','${esc(c.operador || '')}')">` : ''}
               <div style="display:flex;gap:6px">
                 <button class="btn secondary small"
-                  onclick="window.__history.openPhoto('${esc(f.url)}','${esc(f.nome || 'Foto ' + (i+1))}','${esc(c.data || '')}','${esc(c.operador || '')}')">
-                  ${todasFotos.length > 1 ? 'Ver ' + (i+1) : 'Ver foto'}
+                  onclick="window.__history.openPhoto('${esc(f.url)}','${esc(f.nome || 'Foto ' + (i + 1))}','${esc(c.data || '')}','${esc(c.operador || '')}')">
+                  ${todasFotos.length > 1 ? 'Ver ' + (i + 1) : 'Ver foto'}
                 </button>
                 <a class="btn light small" href="${esc(f.url)}" target="_blank" rel="noopener">Nova aba</a>
               </div>
@@ -117,158 +156,166 @@ function buildCard(c) {
       </div>`
     : `<div class="alert warn" style="margin-top:10px"><b>Sem foto:</b> nenhuma imagem do relatório da maquininha.</div>`
 
-  return `<div class="payment" style="margin-bottom:20px">
+  return `<details class="payment" style="margin-bottom:12px">
 
-    <!-- Cabeçalho -->
-    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
-      <div>
-        <h3 style="margin:0 0 4px;font-size:18px">${esc(c.data)} · ${esc(c.turno || '-')}</h3>
-        <div style="color:#6b7280;font-size:13px">
-          Operador: <b>${esc(c.operador || '-')}</b> ·
-          Terminal: <b>${esc(c.terminal || 'CAIXA')}</b>
-          ${criadoEm ? `· <span style="color:#9ca3af">${criadoEm}</span>` : ''}
-        </div>
+    <!-- Linha resumida (sempre visível) -->
+    <summary style="cursor:pointer;list-style:none;display:flex;justify-content:space-between;
+                    align-items:center;gap:10px;flex-wrap:wrap;padding:2px 0;user-select:none">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="font-size:17px;font-weight:800">${dataBR}</span>
+        <span style="color:#374151;font-weight:600">${esc(c.turno || '-')}</span>
+        <span style="color:#9ca3af;font-size:12px">${esc(c.operador || '')}</span>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-        ${acaoManual ? `<span class="chip chipwarn" title="Um ou mais valores foram editados manualmente">⚡ Ação manual</span>` : ''}
-        <span class="chip ${hasAlerts ? 'chipwarn' : 'chipblue'}">${hasAlerts ? '⚠ Com alerta' : '✓ OK'}</span>
+        ${acaoManual ? `<span class="chip chipwarn" title="Valores editados manualmente">⚡ Manual</span>` : ''}
+        <span class="chip ${hasAlerts ? 'chipwarn' : 'chipblue'}">${hasAlerts ? '⚠ Alerta' : '✓ OK'}</span>
+        <span style="color:#9ca3af;font-size:11px;margin-left:4px">▼</span>
       </div>
-    </div>
+    </summary>
 
-    <!-- Resumo sempre visível -->
-    <div class="grid g3" style="margin-top:14px">
-      <div class="summary" ${c.aberturaOK === false ? 'style="border-color:#fecaca;background:linear-gradient(135deg,#fef2f2,#fff)"' : ''}>
-        <small>Troco inicial${aberturaIcon}</small>
-        <strong ${c.aberturaOK === false ? 'style="color:#dc2626"' : ''}>${money(c.abertura)}</strong>
-      </div>
-      <div class="summary">
-        <small>Troco final (contado)</small>
-        <strong>${money(c.trocoFinal || c.dinheiroContado)}</strong>
-      </div>
-      <div class="summary" style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border-color:#bfdbfe">
-        <small style="color:#1e40af">Dinheiro TOTVS</small>
-        <strong style="color:#1e40af">${money(c.dinheiroTotvs)}</strong>
-      </div>
-    </div>
-    <div class="grid g2" style="margin-top:10px">
-      <div class="summary">
-        <small>Sangria / Troco TOTVS</small>
-        <strong>${money(c.sangriaTroco)}</strong>
-      </div>
-      <div class="summary" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe);border-color:#ddd6fe">
-        <small style="color:#5b21b6">Total maquininha</small>
-        <strong style="color:#5b21b6">${money(totalMaq)}</strong>
-      </div>
-    </div>
+    <!-- Conteúdo expandido -->
+    <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
 
-    <!-- Detalhes expansíveis -->
-    <details style="margin-top:16px">
-      <summary style="cursor:pointer;font-weight:800;font-size:13px;color:#374151;padding:8px 0;
-                      list-style:none;display:flex;align-items:center;gap:8px;user-select:none">
-        <span style="font-size:10px">▶</span> Ver detalhes completos
-      </summary>
+      <!-- Meta: operador / terminal / timestamp -->
+      <div style="color:#6b7280;font-size:13px;margin-bottom:14px">
+        Operador: <b>${esc(c.operador || '-')}</b> ·
+        Terminal: <b>${esc(c.terminal || 'CAIXA')}</b>
+        ${criadoEm ? `· <span style="color:#9ca3af">${criadoEm}</span>` : ''}
+      </div>
 
-      <div style="margin-top:14px;display:grid;gap:18px">
-
-        <!-- Abertura -->
-        <div>
-          <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:8px">Abertura</div>
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-            <span style="font-size:22px;font-weight:1000">${money(c.abertura)}</span>
-            <span>${aberturaStatus}</span>
-          </div>
-          ${c.aberturaConfirmada && c.aberturaOK === false
-            ? `<div class="alert warn" style="margin-top:8px">Operador confirmou divergência de abertura e avançou mesmo assim.</div>`
-            : ''}
+      <!-- Resumo numérico -->
+      <div class="grid g2" style="margin-bottom:10px">
+        <div class="summary" ${c.aberturaOK === false ? 'style="border-color:#fecaca;background:linear-gradient(135deg,#fef2f2,#fff)"' : ''}>
+          <small>Troco inicial${aberturaIcon}</small>
+          <strong ${c.aberturaOK === false ? 'style="color:#dc2626"' : ''}>${money(c.abertura)}</strong>
+          ${aberturaDiffHtml}
         </div>
-
-        <div style="height:1px;background:var(--line)"></div>
-
-        <!-- Formas de pagamento -->
-        <div>
-          <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:10px">Formas de pagamento (maquininha)</div>
-          <div class="table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Forma</th>
-                  <th class="num">Valor confirmado</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>${payRows}</tbody>
-              <tfoot>
-                <tr style="background:var(--soft)">
-                  <td><b>Total maquininha</b></td>
-                  <td class="num"><b>${money(totalMaq)}</b></td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+        <div class="summary">
+          <small>Troco final</small>
+          <strong>${money(c.trocoFinal || c.dinheiroContado)}</strong>
         </div>
-
-        <div style="height:1px;background:var(--line)"></div>
-
-        <!-- Foto da maquininha -->
-        <div>
-          <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:6px">Foto da maquininha</div>
-          ${fotoSection}
+        <div class="summary" style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border-color:#bfdbfe">
+          <small style="color:#1e40af">Dinheiro TOTVS</small>
+          <strong style="color:#1e40af">${money(c.dinheiroTotvs)}</strong>
         </div>
+        <div class="summary" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe);border-color:#ddd6fe">
+          <small style="color:#5b21b6">Total maquininha</small>
+          <strong style="color:#5b21b6">${money(totalMaq)}</strong>
+        </div>
+      </div>
 
-        <div style="height:1px;background:var(--line)"></div>
+      <!-- Alertas visíveis no topo do card expandido -->
+      ${hasAlerts ? alertasList : ''}
+      ${c.houveDiferenca ? `<div class="alert bad" style="margin-top:8px"><b>Diferença registrada:</b> ${esc(c.obsDiferenca || '-')}</div>` : ''}
 
-        <!-- Dinheiro na gaveta -->
-        <div>
-          <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:10px">Dinheiro na gaveta</div>
-          <div style="margin-bottom:10px">${cashItems}</div>
-          <div class="grid g3">
-            <div class="summary">
-              <small>Total contado</small>
-              <strong>${money(c.dinheiroContado)}</strong>
+      <!-- Detalhes completos (colapsável) -->
+      <details style="margin-top:14px">
+        <summary style="cursor:pointer;font-weight:800;font-size:13px;color:#374151;padding:8px 0;
+                        list-style:none;display:flex;align-items:center;gap:8px;user-select:none">
+          <span style="font-size:10px">▶</span> Ver detalhes completos
+        </summary>
+
+        <div style="margin-top:14px;display:grid;gap:18px">
+
+          <!-- Abertura detalhada -->
+          <div>
+            <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:8px">Abertura</div>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+              <div>
+                <span style="font-size:22px;font-weight:1000">${money(c.abertura)}</span>
+                ${aberturaDiffHtml}
+              </div>
+              <span style="margin-top:4px">${aberturaStatus}</span>
             </div>
-            <div class="summary">
-              <small>Sangria / Troco TOTVS</small>
-              <strong>${money(c.sangriaTroco)}</strong>
-            </div>
-            <div class="summary" style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border-color:#bfdbfe">
-              <small style="color:#1e40af">A lançar no TOTVS</small>
-              <strong style="color:#1e40af">${money(c.dinheiroTotvs)}</strong>
+            ${c.aberturaConfirmada && c.aberturaOK === false
+              ? `<div class="alert warn" style="margin-top:8px">Operador confirmou divergência de abertura e avançou mesmo assim.</div>`
+              : ''}
+          </div>
+
+          <div style="height:1px;background:var(--line)"></div>
+
+          <!-- Formas de pagamento -->
+          <div>
+            <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:10px">Formas de pagamento (maquininha)</div>
+            <div class="table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Forma</th>
+                    <th class="num">Valor confirmado</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>${payRows}</tbody>
+                <tfoot>
+                  <tr style="background:var(--soft)">
+                    <td><b>Total maquininha</b></td>
+                    <td class="num"><b>${money(totalMaq)}</b></td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           </div>
-          <div class="hint" style="margin-top:10px;font-size:12px">
-            Fórmula: Dinheiro TOTVS = Contado (${money(c.dinheiroContado)}) − Abertura (${money(c.abertura)}) + Sangria (${money(c.sangriaTroco)}) = <b>${money(c.dinheiroTotvs)}</b>
+
+          <div style="height:1px;background:var(--line)"></div>
+
+          <!-- Foto da maquininha -->
+          <div>
+            <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:6px">Foto da maquininha</div>
+            ${fotoSection}
           </div>
-          <div class="summary" style="margin-top:10px">
-            <small>Troco final deixado para o próximo caixa</small>
-            <strong>${money(c.trocoFinal)}</strong>
+
+          <div style="height:1px;background:var(--line)"></div>
+
+          <!-- Dinheiro na gaveta -->
+          <div>
+            <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:10px">Dinheiro na gaveta</div>
+            <div style="margin-bottom:10px">${cashItems}</div>
+            <div class="grid g3">
+              <div class="summary">
+                <small>Total contado</small>
+                <strong>${money(c.dinheiroContado)}</strong>
+              </div>
+              <div class="summary">
+                <small>Sangria / Troco TOTVS</small>
+                <strong>${money(c.sangriaTroco)}</strong>
+              </div>
+              <div class="summary" style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border-color:#bfdbfe">
+                <small style="color:#1e40af">A lançar no TOTVS</small>
+                <strong style="color:#1e40af">${money(c.dinheiroTotvs)}</strong>
+              </div>
+            </div>
+            <div class="hint" style="margin-top:10px;font-size:12px">
+              Fórmula: Dinheiro TOTVS = Contado (${money(c.dinheiroContado)}) − Abertura (${money(c.abertura)}) + Sangria (${money(c.sangriaTroco)}) = <b>${money(c.dinheiroTotvs)}</b>
+            </div>
+            <div class="summary" style="margin-top:10px">
+              <small>Troco final deixado para o próximo caixa</small>
+              <strong>${money(c.trocoFinal)}</strong>
+            </div>
           </div>
+
+          <div style="height:1px;background:var(--line)"></div>
+
+          <!-- Diferença TOTVS -->
+          <div>
+            <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:8px">Diferença no TOTVS</div>
+            ${c.houveDiferenca
+              ? `<div class="alert bad"><b>Sim, houve diferença.</b><br>${esc(c.obsDiferenca || '(sem observação)')}</div>`
+              : `<div class="alert ok"><b>Não.</b> O TOTVS bateu com os valores informados.</div>`
+            }
+          </div>
+
+          ${alertasList ? `<div style="height:1px;background:var(--line)"></div><div>
+            <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:8px">Alertas do fechamento</div>
+            ${alertasList}
+          </div>` : ''}
+
         </div>
+      </details>
 
-        <div style="height:1px;background:var(--line)"></div>
-
-        <!-- Diferença TOTVS -->
-        <div>
-          <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:8px">Diferença no TOTVS</div>
-          ${c.houveDiferenca
-            ? `<div class="alert bad"><b>Sim, houve diferença.</b><br>${esc(c.obsDiferenca || '(sem observação)')}</div>`
-            : `<div class="alert ok"><b>Não.</b> O TOTVS bateu com os valores informados.</div>`
-          }
-        </div>
-
-        ${alertasList ? `<div style="height:1px;background:var(--line)"></div><div>
-          <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:8px">Alertas do fechamento</div>
-          ${alertasList}
-        </div>` : ''}
-
-      </div>
-    </details>
-
-    <!-- Alertas sempre visíveis se existirem -->
-    ${hasAlerts ? alertasList : ''}
-    ${c.houveDiferenca ? `<div class="alert bad" style="margin-top:8px"><b>Diferença registrada:</b> ${esc(c.obsDiferenca || '-')}</div>` : ''}
-
-  </div>`
+    </div>
+  </details>`
 }
 
 export function openPhoto(url, nome, data, operador) {
