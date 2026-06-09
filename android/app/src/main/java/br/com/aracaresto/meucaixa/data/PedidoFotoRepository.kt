@@ -14,7 +14,10 @@ data class PedidoFoto(
     val terminal: String,
     val status: String,
     val foto_url: String? = null,
-    val foto_storage_path: String? = null
+    val foto_storage_path: String? = null,
+    val device_token: String? = null,
+    val criado_em: String? = null,
+    val atualizado_em: String? = null
 )
 
 class PedidoFotoRepository {

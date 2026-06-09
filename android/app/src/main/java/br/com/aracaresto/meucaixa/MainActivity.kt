@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import br.com.aracaresto.meucaixa.data.PedidoFoto
 import br.com.aracaresto.meucaixa.data.PedidoFotoRepository
@@ -45,18 +46,22 @@ class MainActivity : ComponentActivity() {
     fun MeuCaixaApp() {
         var pedidoPendente by remember { mutableStateOf<PedidoFoto?>(null) }
         var isPolling by remember { mutableStateOf(true) }
+        var erroPolling by remember { mutableStateOf<String?>(null) }
+        var tentativas by remember { mutableStateOf(0) }
 
-        // Polling: busca pedidos a cada 5 segundos
         LaunchedEffect(isPolling) {
             while (isPolling) {
                 if (pedidoPendente == null) {
                     try {
                         val pedidos = repository.buscarPedidosPendentes()
+                        erroPolling = null
+                        tentativas++
                         if (pedidos.isNotEmpty()) {
                             pedidoPendente = pedidos.first()
                         }
                     } catch (e: Exception) {
-                        // Rede instável — tentar novamente
+                        erroPolling = e.message ?: e.javaClass.simpleName
+                        tentativas++
                     }
                 }
                 delay(5000)
@@ -80,7 +85,6 @@ class MainActivity : ComponentActivity() {
                 }
             )
         } else {
-            // Tela de espera
             Box(
                 Modifier.fillMaxSize().background(Color(0xFF08090D)),
                 contentAlignment = Alignment.Center
@@ -90,7 +94,6 @@ class MainActivity : ComponentActivity() {
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                     modifier = Modifier.padding(32.dp)
                 ) {
-                    // Logo AG
                     Box(
                         Modifier.size(80.dp).background(
                             Color(0xFFF7A51C),
@@ -102,37 +105,58 @@ class MainActivity : ComponentActivity() {
                             color = Color(0xFF111827))
                     }
 
-                    Text(
-                        "Meu Caixa",
+                    Text("Meu Caixa",
                         style = MaterialTheme.typography.titleLarge,
-                        color = Color.White
-                    )
+                        color = Color.White)
 
-                    Text(
-                        "Araçá Grill",
+                    Text("Araçá Grill",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.Gray
-                    )
+                        color = Color.Gray)
 
-                    Spacer(Modifier.height(24.dp))
+                    Spacer(Modifier.height(16.dp))
 
-                    CircularProgressIndicator(
-                        color = Color(0xFFF7A51C),
-                        modifier = Modifier.size(32.dp)
-                    )
+                    if (erroPolling != null) {
+                        // Erro visível: ajuda a diagnosticar problemas de conexão
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("⚠ Erro de conexão",
+                                color = Color(0xFFF87171),
+                                style = MaterialTheme.typography.bodyMedium)
+                            Text(erroPolling ?: "",
+                                color = Color(0xFF9CA3AF),
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            Text("Verifique a internet e aguarde...",
+                                color = Color(0xFF6B7280),
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                    } else {
+                        CircularProgressIndicator(
+                            color = Color(0xFFF7A51C),
+                            modifier = Modifier.size(32.dp))
 
-                    Text(
-                        "Aguardando pedido de foto...",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF9CA3AF)
-                    )
+                        Text("Aguardando pedido de foto...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF9CA3AF))
 
-                    Text(
-                        "Quando o caixa precisar da foto da maquininha,\nesta tela ficará ativa automaticamente.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF6B7280),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
+                        Text("Quando o caixa precisar da foto da maquininha,\nesta tela ficará ativa automaticamente.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF6B7280),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
+
+                    // Status discreto de conexão no rodapé
+                    if (tentativas > 0) {
+                        Text(
+                            if (erroPolling == null) "✓ Conectado ao Supabase (verificação #$tentativas)"
+                            else "✗ Falha #$tentativas",
+                            color = if (erroPolling == null) Color(0xFF374151) else Color(0xFF7F1D1D),
+                            fontSize = 10.sp
+                        )
+                    }
                 }
             }
         }
