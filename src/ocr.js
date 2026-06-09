@@ -1,5 +1,6 @@
 import { state, activeForms } from './state.js'
 import { toast, parseMoney, norm } from './ui.js'
+import { analyzePhotoWithAI, aiConfigured } from './ai-ocr.js'
 
 let Tesseract = null
 
@@ -14,7 +15,35 @@ async function loadTesseract() {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Fluxo principal de OCR — cascata completa:
+//   1. IA (Gemini → Mistral → OpenRouter)  ← se alguma chave estiver configurada
+//   2. Tesseract.js local                  ← fallback gratuito sempre disponível
+// ─────────────────────────────────────────────────────────────────────────────
 export async function attemptOcr(dataUrl) {
+  // Etapa 1 — IA em cascata
+  if (aiConfigured()) {
+    try {
+      toast('Analisando foto com IA...')
+      const ai = await analyzePhotoWithAI(dataUrl)
+      if (ai) {
+        const ok = applyAiResult(ai.result)
+        state.current.ocrStatus = ok ? 'ok' : 'parcial'
+        state.current.ocrText = `[${ai.provider}] ${JSON.stringify(ai.result)}`
+        toast(ok
+          ? `${ai.provider} leu os valores. Confirme cada um.`
+          : `${ai.provider} respondeu, mas não encontrou valores. Verifique a foto.`)
+        const { render } = window.__appRender || {}
+        render && render()
+        return
+      }
+      toast('IA não encontrou valores — usando Tesseract como fallback...')
+    } catch (e) {
+      console.warn('[OCR] Cascata IA falhou:', e)
+    }
+  }
+
+  // Etapa 2 — Tesseract.js (fallback local)
   const T = await loadTesseract()
   if (!T) {
     state.current.ocrStatus = 'erro'
@@ -22,7 +51,7 @@ export async function attemptOcr(dataUrl) {
     return
   }
   try {
-    toast('Tentando ler OCR da foto...')
+    toast('Lendo foto com Tesseract (OCR local)...')
     const res = await T.recognize(dataUrl, 'por')
     state.current.ocrText = res?.data?.text || ''
     const ok = applyOcrText(state.current.ocrText)
@@ -32,6 +61,31 @@ export async function attemptOcr(dataUrl) {
     state.current.ocrStatus = 'erro'
     toast('Falha no OCR. Preencha manualmente.')
   }
+  const { render } = window.__appRender || {}
+  render && render()
+}
+
+// Aplica resultado da IA (objeto JSON) às formas de pagamento ativas
+export function applyAiResult(obj) {
+  let any = false
+  activeForms().forEach(f => {
+    const keys = [f.id, f.nome, ...(f.aliases || [])].map(norm)
+    Object.entries(obj).forEach(([k, v]) => {
+      if (norm(k) === 'total') return
+      const val = typeof v === 'number' ? v : parseMoney(String(v))
+      if (keys.includes(norm(k)) && val > 0) {
+        const p = state.current.pagamentos.find(x => x.formId === f.id)
+        if (p) {
+          p.iaValue = val
+          p.confirmedValue = val
+          p.confirmed = false
+          p.edited = false
+          any = true
+        }
+      }
+    })
+  })
+  return any
 }
 
 export function retryOcr() {
@@ -39,7 +93,7 @@ export function retryOcr() {
   state.current.ocrStatus = 'lendo'
   const { render } = window.__appRender || {}
   render && render()
-  setTimeout(() => attemptOcr(state.current.fotoPreview).then(() => render && render()), 50)
+  setTimeout(() => attemptOcr(state.current.fotoPreview), 50)
 }
 
 export function candidates(line) {
