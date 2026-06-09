@@ -184,6 +184,14 @@ function buildCard(c) {
 
         <div style="height:1px;background:var(--line)"></div>
 
+        <!-- Foto da maquininha -->
+        <div>
+          <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:6px">Foto da maquininha</div>
+          ${fotoSection}
+        </div>
+
+        <div style="height:1px;background:var(--line)"></div>
+
         <!-- Dinheiro na gaveta -->
         <div>
           <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:10px">Dinheiro na gaveta</div>
@@ -226,14 +234,6 @@ function buildCard(c) {
           <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:8px">Alertas do fechamento</div>
           ${alertasList}
         </div>` : ''}
-
-        <div style="height:1px;background:var(--line)"></div>
-
-        <!-- Foto -->
-        <div>
-          <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:6px">Foto da maquininha</div>
-          ${fotoSection}
-        </div>
 
       </div>
     </details>

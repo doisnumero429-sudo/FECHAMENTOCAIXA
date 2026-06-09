@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -21,10 +22,28 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.exifinterface.media.ExifInterface
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 enum class CameraState { PREVIEW, CONFIRMANDO, ENVIANDO, SUCESSO, ERRO }
+
+private fun correctOrientation(bitmap: Bitmap, filePath: String): Bitmap {
+    val exif = ExifInterface(filePath)
+    val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+    val matrix = Matrix()
+    when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90    -> matrix.postRotate(90f)
+        ExifInterface.ORIENTATION_ROTATE_180   -> matrix.postRotate(180f)
+        ExifInterface.ORIENTATION_ROTATE_270   -> matrix.postRotate(270f)
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL   -> matrix.preScale(1f, -1f)
+        ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.postRotate(90f); matrix.preScale(-1f, 1f) }
+        ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.postRotate(-90f); matrix.preScale(-1f, 1f) }
+        else -> return bitmap
+    }
+    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+}
 
 @Composable
 fun CameraScreen(
@@ -35,7 +54,6 @@ fun CameraScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Verificar permissão antes de tentar abrir a câmera
     val temPermissao = ContextCompat.checkSelfPermission(
         context, Manifest.permission.CAMERA
     ) == PackageManager.PERMISSION_GRANTED
@@ -68,7 +86,6 @@ fun CameraScreen(
     var erroMsg by remember { mutableStateOf("") }
 
     val imageCapture = remember { ImageCapture.Builder().build() }
-    // Executor apenas para takePicture (operação de fundo) — NÃO para bindToLifecycle
     val executor = remember { Executors.newSingleThreadExecutor() }
 
     DisposableEffect(Unit) {
@@ -83,7 +100,6 @@ fun CameraScreen(
                         val previewView = PreviewView(ctx)
                         val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
 
-                        // CRÍTICO: bindToLifecycle deve rodar na main thread
                         cameraProviderFuture.addListener({
                             val cameraProvider = cameraProviderFuture.get()
                             val preview = Preview.Builder().build().also {
@@ -100,7 +116,7 @@ fun CameraScreen(
                             } catch (e: Exception) {
                                 // câmera em uso por outro app ou hardware indisponível
                             }
-                        }, ContextCompat.getMainExecutor(ctx)) // ← main thread, não executor de fundo
+                        }, ContextCompat.getMainExecutor(ctx))
                         previewView
                     },
                     modifier = Modifier.fillMaxSize()
@@ -115,19 +131,19 @@ fun CameraScreen(
                         color = Color.White, style = MaterialTheme.typography.bodyMedium)
                     Button(
                         onClick = {
-                            val outputOptions = ImageCapture.OutputFileOptions.Builder(
-                                java.io.File(context.cacheDir, "foto_temp.jpg")
-                            ).build()
+                            val tempFile = java.io.File(context.cacheDir, "foto_temp.jpg")
+                            val outputOptions = ImageCapture.OutputFileOptions.Builder(tempFile).build()
                             imageCapture.takePicture(outputOptions, executor,
                                 object : ImageCapture.OnImageSavedCallback {
                                     override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                                        val file = java.io.File(context.cacheDir, "foto_temp.jpg")
-                                        val bmp = BitmapFactory.decodeFile(file.absolutePath)
-                                        if (bmp == null) {
+                                        val raw = BitmapFactory.decodeFile(tempFile.absolutePath)
+                                        if (raw == null) {
                                             erroMsg = "Não foi possível processar a imagem"
                                             cameraState = CameraState.ERRO
                                             return
                                         }
+                                        // Corrigir orientação com base nos dados EXIF do arquivo
+                                        val bmp = correctOrientation(raw, tempFile.absolutePath)
                                         val baos = ByteArrayOutputStream()
                                         bmp.compress(Bitmap.CompressFormat.JPEG, 85, baos)
                                         capturedBytes = baos.toByteArray()
