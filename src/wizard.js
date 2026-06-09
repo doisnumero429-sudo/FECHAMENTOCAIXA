@@ -271,24 +271,42 @@ function stepMachine() {
   const cards = activeForms().map(f => {
     const p = state.current.pagamentos.find(x => x.formId === f.id) || {}
     const agent = f.origem === 'agente'
+
+    // Valor que vai aparecer como padrão no campo confirmado:
+    // se já confirmado → valor confirmado; se não → copia o valor da IA
+    const confDefault = p.confirmed ? money(p.confirmedValue) : (p.iaValue > 0 ? money(p.iaValue) : '')
+
+    // Campo IA: display readonly (nunca editável)
+    const iaDisplay = f.ia
+      ? `<div style="min-height:48px;padding:13px 14px;background:#f3f4f6;border:1px solid #e5e7eb;
+                    border-radius:16px;font-weight:760;color:#374151;display:flex;align-items:center;
+                    font-size:15px">
+           ${p.iaValue > 0 ? money(p.iaValue) : '<span style="color:#9ca3af">—</span>'}
+         </div>`
+      : `<div style="min-height:48px;padding:13px 14px;background:#f9fafb;border:1px solid #f0f0f0;
+                    border-radius:16px;font-weight:760;color:#9ca3af;display:flex;align-items:center;
+                    font-size:13px">Não usa IA</div>`
+
     return `<div class="payment ${p.confirmed ? 'confirmed' : ''} ${p.edited ? 'edited' : ''}">
       <div class="payrow">
         <div>
           <span class="chip ${agent ? 'chipwarn' : f.ia ? 'chipblue' : ''}">${esc(f.nome)}</span>
-          <div style="font-size:12px;color:#6b7280;margin-top:8px">${agent ? 'Agente futuramente' : f.ia ? 'IA/OCR ou manual' : 'Manual'}</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:8px">${agent ? 'Agente futuramente' : f.ia ? 'IA/OCR' : 'Manual'}</div>
         </div>
-        <div class="field"><label>Lido pela IA</label>
-          <input class="brl ia" data-id="${f.id}" value="${p.iaValue ? money(p.iaValue) : ''}"
-            ${!f.ia ? 'disabled' : ''} placeholder="R$ 0,00"></div>
-        <div class="field"><label>Confirmado</label>
-          <input class="brl conf" data-id="${f.id}" value="${p.confirmedValue ? money(p.confirmedValue) : ''}"
-            placeholder="R$ 0,00"></div>
+        <div class="field">
+          <label>Lido pela IA</label>
+          ${iaDisplay}
+        </div>
+        <div class="field">
+          <label>Valor confirmado</label>
+          <input class="brl conf money" data-id="${f.id}" value="${confDefault}"
+            placeholder="R$ 0,00" inputmode="decimal">
+        </div>
         <div class="btns">
           <button class="btn success small" onclick="window.__wizard.confirmPay('${f.id}')">Confirmar</button>
-          <button class="btn light small" onclick="window.__wizard.zeroPay('${f.id}')">Zerar</button>
         </div>
       </div>
-      ${p.edited ? '<div class="alert warn" style="margin-top:10px"><b>Editado:</b> diferente do valor lido pela IA.</div>' : ''}
+      ${p.edited ? '<div class="alert warn" style="margin-top:10px"><b>Editado:</b> valor diferente do lido pela IA.</div>' : ''}
     </div>`
   }).join('')
 
@@ -336,10 +354,6 @@ function stepMachine() {
 }
 
 export function syncPay() {
-  document.querySelectorAll('.ia').forEach(el => {
-    const p = state.current.pagamentos.find(x => x.formId === el.dataset.id)
-    if (p) p.iaValue = moneyInput(el)
-  })
   document.querySelectorAll('.conf').forEach(el => {
     const p = state.current.pagamentos.find(x => x.formId === el.dataset.id)
     if (p) p.confirmedValue = moneyInput(el)
