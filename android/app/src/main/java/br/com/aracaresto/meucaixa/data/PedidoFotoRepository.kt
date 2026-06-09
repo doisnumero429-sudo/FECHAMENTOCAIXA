@@ -36,9 +36,7 @@ class PedidoFotoRepository {
     suspend fun enviarFoto(pedidoId: String, imageBytes: ByteArray): String {
         val storagePath = "pedidos/$pedidoId.jpg"
 
-        sb.storage.from("relatorios-caixa").upload(storagePath, imageBytes) {
-            upsert = true
-        }
+        sb.storage.from("relatorios-caixa").upload(storagePath, imageBytes)
 
         val publicUrl = sb.storage.from("relatorios-caixa").publicUrl(storagePath)
 
