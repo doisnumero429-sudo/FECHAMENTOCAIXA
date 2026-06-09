@@ -34,6 +34,11 @@ function buildCard(c) {
     : ''
 
   // ── Abertura ──
+  const aberturaIcon = c.aberturaOK === false
+    ? `<span title="Divergência de abertura" style="color:#dc2626;font-size:15px;margin-left:5px">⚠</span>`
+    : c.aberturaOK === true
+    ? `<span title="Abertura conferida" style="color:#16a34a;font-size:13px;margin-left:4px">✓</span>`
+    : ''
   let aberturaStatus = ''
   if (c.aberturaOK === true)
     aberturaStatus = '<span style="color:#16a34a;font-weight:800">✓ Bateu com o fechamento anterior</span>'
@@ -44,8 +49,12 @@ function buildCard(c) {
   else
     aberturaStatus = '<span style="color:#6b7280">Sem comparação disponível</span>'
 
-  // ── Formas de pagamento ──
+  // ── Ação manual ──
+  const acaoManual = (c.pagamentos || []).some(p => p.edited) || c.aberturaConfirmada
+
+  // ── Formas de pagamento (filtrar zeros) ──
   const pagamentos = (c.pagamentos || [])
+    .filter(p => Number(p.confirmedValue || 0) > 0)
     .slice()
     .sort((a, b) => (a.ordem || 999) - (b.ordem || 999))
 
@@ -78,15 +87,33 @@ function buildCard(c) {
     `<div class="alert ${a.nivel === 'bad' ? 'bad' : 'warn'}" style="margin-top:8px">${esc(a.texto)}</div>`
   ).join('')
 
-  // ── Foto ──
-  const fotoSection = c.fotoUrl
-    ? `<div class="photo-actions" style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span class="chip" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);color:#166534;border-color:#bbf7d0">📷 Foto anexada</span>
-        <button class="btn secondary small"
-          onclick="window.__history.openPhoto('${esc(c.fotoUrl)}','${esc(c.fotoNome || 'Foto da maquininha')}','${esc(c.data || '')}','${esc(c.operador || '')}')">
-          Ver foto
-        </button>
-        <a class="btn light small" href="${esc(c.fotoUrl)}" target="_blank" rel="noopener">Abrir em nova aba</a>
+  // ── Foto (suporta múltiplas) ──
+  const todasFotos = (c.fotos && c.fotos.length > 0)
+    ? c.fotos
+    : c.fotoUrl ? [{ url: c.fotoUrl, nome: c.fotoNome || 'Foto da maquininha', preview: null }] : []
+
+  const fotoSection = todasFotos.length > 0
+    ? `<div style="margin-top:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+          <span class="chip" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);color:#166534;border-color:#bbf7d0">
+            📷 ${todasFotos.length > 1 ? todasFotos.length + ' fotos' : 'Foto anexada'}
+          </span>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          ${todasFotos.map((f, i) => `
+            <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-start">
+              ${f.preview
+                ? `<img src="${esc(f.preview)}" style="width:72px;height:72px;object-fit:cover;border-radius:10px;border:2px solid #e5e7eb;cursor:pointer"
+                     onclick="window.__history.openPhoto('${esc(f.url)}','${esc(f.nome || 'Foto ' + (i+1))}','${esc(c.data || '')}','${esc(c.operador || '')}')">` : ''}
+              <div style="display:flex;gap:6px">
+                <button class="btn secondary small"
+                  onclick="window.__history.openPhoto('${esc(f.url)}','${esc(f.nome || 'Foto ' + (i+1))}','${esc(c.data || '')}','${esc(c.operador || '')}')">
+                  ${todasFotos.length > 1 ? 'Ver ' + (i+1) : 'Ver foto'}
+                </button>
+                <a class="btn light small" href="${esc(f.url)}" target="_blank" rel="noopener">Nova aba</a>
+              </div>
+            </div>`).join('')}
+        </div>
       </div>`
     : `<div class="alert warn" style="margin-top:10px"><b>Sem foto:</b> nenhuma imagem do relatório da maquininha.</div>`
 
@@ -102,32 +129,31 @@ function buildCard(c) {
           ${criadoEm ? `· <span style="color:#9ca3af">${criadoEm}</span>` : ''}
         </div>
       </div>
-      <span class="chip ${hasAlerts ? 'chipwarn' : 'chipblue'}">${hasAlerts ? '⚠ Com alerta' : '✓ OK'}</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        ${acaoManual ? `<span class="chip chipwarn" title="Um ou mais valores foram editados manualmente">⚡ Ação manual</span>` : ''}
+        <span class="chip ${hasAlerts ? 'chipwarn' : 'chipblue'}">${hasAlerts ? '⚠ Com alerta' : '✓ OK'}</span>
+      </div>
     </div>
 
     <!-- Resumo sempre visível -->
     <div class="grid g3" style="margin-top:14px">
-      <div class="summary">
-        <small>Abertura da gaveta</small>
-        <strong>${money(c.abertura)}</strong>
+      <div class="summary" ${c.aberturaOK === false ? 'style="border-color:#fecaca;background:linear-gradient(135deg,#fef2f2,#fff)"' : ''}>
+        <small>Troco inicial${aberturaIcon}</small>
+        <strong ${c.aberturaOK === false ? 'style="color:#dc2626"' : ''}>${money(c.abertura)}</strong>
       </div>
       <div class="summary">
-        <small>Dinheiro contado</small>
-        <strong>${money(c.dinheiroContado)}</strong>
+        <small>Troco final (contado)</small>
+        <strong>${money(c.trocoFinal || c.dinheiroContado)}</strong>
       </div>
-      <div class="summary">
-        <small>Troco final deixado</small>
-        <strong>${money(c.trocoFinal)}</strong>
+      <div class="summary" style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border-color:#bfdbfe">
+        <small style="color:#1e40af">Dinheiro TOTVS</small>
+        <strong style="color:#1e40af">${money(c.dinheiroTotvs)}</strong>
       </div>
     </div>
-    <div class="grid g3" style="margin-top:10px">
+    <div class="grid g2" style="margin-top:10px">
       <div class="summary">
         <small>Sangria / Troco TOTVS</small>
         <strong>${money(c.sangriaTroco)}</strong>
-      </div>
-      <div class="summary" style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border-color:#bfdbfe">
-        <small style="color:#1e40af">Dinheiro a lançar no TOTVS</small>
-        <strong style="color:#1e40af">${money(c.dinheiroTotvs)}</strong>
       </div>
       <div class="summary" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe);border-color:#ddd6fe">
         <small style="color:#5b21b6">Total maquininha</small>

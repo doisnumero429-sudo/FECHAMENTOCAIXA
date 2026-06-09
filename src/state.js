@@ -84,6 +84,8 @@ export function newClosure() {
     houveDiferenca: false,
     obsDiferenca: '',
     alertas: [],
+    fotos: [],
+    ocrIncerto: [],
     criado_em: new Date().toISOString()
   }
   hydrate()

@@ -55,6 +55,10 @@ export function stopPhotoRequest() {
   }
 }
 
+export async function requestAnotherPhoto() {
+  await startPhotoRequest()
+}
+
 export async function handleManualAdvance() {
   stopPhotoRequest()
   if (state.currentPedidoId) {
@@ -101,11 +105,23 @@ export async function handleFallbackUpload(event) {
 }
 
 async function handlePhotoArrived(row) {
-  state.current.fotoUrl = row.foto_url || ''
-  state.current.fotoNome = row.foto_url ? row.foto_url.split('/').pop() : 'foto-maquininha.jpg'
+  // Inicializar array de fotos se necessário
+  if (!state.current.fotos) state.current.fotos = []
+
+  const fotoNome = row.foto_url ? row.foto_url.split('/').pop() : 'foto-maquininha.jpg'
+  const foto = { url: row.foto_url || '', nome: fotoNome, preview: null }
+  state.current.fotos.push(foto)
+
+  // Primeira foto é a principal
+  if (!state.current.fotoUrl) {
+    state.current.fotoUrl = row.foto_url || ''
+    state.current.fotoNome = fotoNome
+  }
+
   state.currentPedidoId = null
 
-  updateRequestUI('recebida', 'Foto recebida! OCR em andamento...')
+  const fotoIndex = state.current.fotos.length - 1
+  updateRequestUI('recebida', `Foto ${state.current.fotos.length} recebida! OCR em andamento...`)
 
   const { render } = window.__appRender || {}
 
@@ -116,6 +132,7 @@ async function handlePhotoArrived(row) {
       const blob = await resp.blob()
       const reader = new FileReader()
       reader.onload = ev => {
+        foto.preview = ev.target.result
         state.current.fotoPreview = ev.target.result
         state.current.ocrStatus = 'lendo'
         render && render()

@@ -1,6 +1,6 @@
 import { state, activeForms } from './state.js'
 import { toast, parseMoney, norm } from './ui.js'
-import { analyzePhotoWithAI, aiConfigured } from './ai-ocr.js'
+import { analyzePhotoWithAI, aiConfigured, getLearnedAssociations, saveLearnedAssociation } from './ai-ocr.js'
 
 let Tesseract = null
 
@@ -68,10 +68,12 @@ export async function attemptOcr(dataUrl) {
 // Aplica resultado da IA (objeto JSON) às formas de pagamento ativas
 export function applyAiResult(obj) {
   let any = false
+
+  // Primeira passagem: comparar chaves do JSON contra id/nome/aliases de cada forma
   activeForms().forEach(f => {
     const keys = [f.id, f.nome, ...(f.aliases || [])].map(norm)
     Object.entries(obj).forEach(([k, v]) => {
-      if (norm(k) === 'total') return
+      if (norm(k) === 'total' || norm(k) === '_incerto') return
       const val = typeof v === 'number' ? v : parseMoney(String(v))
       if (keys.includes(norm(k)) && val > 0) {
         const p = state.current.pagamentos.find(x => x.formId === f.id)
@@ -85,6 +87,28 @@ export function applyAiResult(obj) {
       }
     })
   })
+
+  // Segunda passagem: associações aprendidas via localStorage
+  const learned = getLearnedAssociations()
+  Object.entries(obj).forEach(([k, v]) => {
+    if (norm(k) === 'total' || norm(k) === '_incerto') return
+    const formId = learned[norm(k)]
+    if (!formId) return
+    const val = typeof v === 'number' ? v : parseMoney(String(v))
+    if (val <= 0) return
+    const p = state.current.pagamentos.find(x => x.formId === formId)
+    if (p && Number(p.iaValue || 0) === 0) {
+      p.iaValue = val
+      p.confirmedValue = val
+      p.confirmed = false
+      p.edited = false
+      any = true
+    }
+  })
+
+  // Armazenar itens incertos para exibição na UI
+  state.current.ocrIncerto = (obj._incerto || []).filter(x => x.valor > 0)
+
   return any
 }
 

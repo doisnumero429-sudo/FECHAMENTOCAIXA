@@ -1,7 +1,8 @@
 import { state, STEPS, activeForms, hydrate, calc, buildAlerts, compareOpening, newClosure, today, uid } from './state.js'
 import { money, parseMoney, moneyInput, esc, norm, toast, attachMoneyListeners, openPhotoModal } from './ui.js'
-import { startPhotoRequest, stopPhotoRequest, handleFallbackUpload, handleManualAdvance } from './photo-request.js'
+import { startPhotoRequest, stopPhotoRequest, handleFallbackUpload, handleManualAdvance, requestAnotherPhoto } from './photo-request.js'
 import { retryOcr, applyJson, applyOcrText } from './ocr.js'
+import { saveLearnedAssociation } from './ai-ocr.js'
 import { uploadPhoto, saveClosure, loadCloudClosures } from './supabase.js'
 
 export function render() {
@@ -314,6 +315,43 @@ function stepMachine() {
     ? `<div class="alert ok" style="margin-top:10px"><b>Foto já recebida</b> e salva na nuvem.</div>`
     : ''
 
+  const fotosGallery = (state.current.fotos || []).length > 0
+    ? `<div style="margin-top:12px">
+         <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:8px">
+           Fotos recebidas (${state.current.fotos.length})
+         </div>
+         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+           ${state.current.fotos.map((f, i) => f.preview
+             ? `<img src="${f.preview}" style="width:64px;height:64px;object-fit:cover;border-radius:10px;border:2px solid #e5e7eb;cursor:pointer"
+                  onclick="window.__history?.openPhoto('${esc(f.url)}','Foto ${i+1}','','')"> `
+             : `<div style="width:64px;height:64px;border-radius:10px;background:#f3f4f6;border:2px solid #e5e7eb;display:flex;align-items:center;justify-content:center;font-size:11px;color:#9ca3af">Foto ${i+1}</div>`
+           ).join('')}
+         </div>
+         <button class="btn secondary small" onclick="window.__wizard.addPhoto()">+ Solicitar outra foto</button>
+       </div>`
+    : ''
+
+  const incertoPanel = (state.current.ocrIncerto || []).length > 0
+    ? `<div class="alert warn" style="margin-top:14px">
+         <b>&#9888; A IA encontrou valores não reconhecidos — associe para aprender:</b>
+         <div style="margin-top:10px;display:grid;gap:10px">
+           ${state.current.ocrIncerto.map((item, i) => `
+             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px;background:rgba(255,255,255,.6);border-radius:10px">
+               <div>
+                 <div style="font-weight:800;font-size:13px">${esc(item.texto)}</div>
+                 <div style="font-size:12px;color:#9ca3af">${money(item.valor)}</div>
+               </div>
+               <select onchange="window.__wizard.associarIncerto(${i}, this.value)"
+                 style="flex:1;min-height:36px;border-radius:10px;padding:4px 10px;font-size:13px;border:1px solid #fde68a">
+                 <option value="">Selecione a forma de pagamento...</option>
+                 ${activeForms().map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
+                 <option value="ignorar">— Ignorar este item</option>
+               </select>
+             </div>`).join('')}
+         </div>
+       </div>`
+    : ''
+
   return `
     <div class="grid g2">
       <div>
@@ -323,6 +361,7 @@ function stepMachine() {
           ? `<img id="photoPreview" class="photo" style="display:block" src="${state.current.fotoPreview}">`
           : `<img id="photoPreview" class="photo">`}
         ${ocrBanner}
+        ${fotosGallery}
         <div class="btns" style="margin-top:10px">
           <button class="btn secondary" onclick="window.__ocr.retryOcr()">Tentar OCR novamente</button>
           <button class="btn light" onclick="window.__wizard.toggleJson()">Colar JSON da IA</button>
@@ -348,9 +387,36 @@ function stepMachine() {
       <div>
         <div class="alert blue"><b>Confirme individualmente:</b> se editar, o card fica marcado e isso vai para a conferência.</div>
         <div class="grid">${cards}</div>
+        ${incertoPanel}
       </div>
     </div>
     ${footer()}`
+}
+
+export function addPhoto() {
+  requestAnotherPhoto()
+}
+
+export function associarIncerto(i, formId) {
+  const item = state.current.ocrIncerto?.[i]
+  if (!item) return
+  if (formId === 'ignorar') {
+    state.current.ocrIncerto.splice(i, 1)
+    render()
+    return
+  }
+  if (!formId) return
+  saveLearnedAssociation(item.texto, formId)
+  const p = state.current.pagamentos.find(x => x.formId === formId)
+  if (p) {
+    p.iaValue = item.valor
+    p.confirmedValue = item.valor
+    p.confirmed = false
+    p.edited = false
+  }
+  state.current.ocrIncerto.splice(i, 1)
+  toast(`"${item.texto}" → "${formId}" salvo. Usarei essa associação nas próximas leituras.`)
+  render()
 }
 
 export function syncPay() {
@@ -462,16 +528,21 @@ function stepSangria() {
 function rowsFinal() {
   calc()
   return [
-    ...state.current.pagamentos.slice().sort((a, b) => (a.ordem || 999) - (b.ordem || 999))
-      .map(p => ({ nome: p.nome, valor: Number(p.confirmedValue || 0) })),
-    { nome: 'Dinheiro', valor: Number(state.current.dinheiroTotvs || 0) }
+    ...state.current.pagamentos
+      .filter(p => Number(p.confirmedValue || 0) > 0)
+      .slice().sort((a, b) => (a.ordem || 999) - (b.ordem || 999))
+      .map(p => ({ nome: p.nome, valor: Number(p.confirmedValue) })),
+    { nome: 'Dinheiro', valor: Number(state.current.dinheiroTotvs || 0), destaque: true }
   ]
 }
 
 function stepTotvs() {
   const rows = rowsFinal().map(r =>
-    `<tr><td>${esc(r.nome)}</td><td class="num">${money(r.valor)}</td>
-     <td><button class="btn light small" onclick="window.__wizard.copy('${money(r.valor)}')">Copiar</button></td></tr>`
+    `<tr ${r.destaque ? 'style="background:linear-gradient(135deg,#eff6ff,#dbeafe)"' : ''}>
+     <td ${r.destaque ? 'style="font-weight:1000;color:#1e40af"' : ''}>${esc(r.nome)}</td>
+     <td class="num" ${r.destaque ? 'style="color:#1e40af"' : ''}>${money(r.valor)}</td>
+     <td><button class="btn light small" onclick="window.__wizard.copy('${money(r.valor)}')">Copiar</button></td>
+    </tr>`
   ).join('')
   return `
     <div class="alert blue">
@@ -534,10 +605,12 @@ export function toggleDif() {
 
 function stepReview() {
   buildAlerts()
-  const pays = state.current.pagamentos.map(p =>
-    `<tr><td>${esc(p.nome)}</td><td class="num">${money(p.confirmedValue)}</td>
-     <td>${p.edited ? 'Editado' : p.confirmed ? 'Confirmado' : 'Pendente'}</td></tr>`
-  ).join('')
+  const pays = state.current.pagamentos
+    .filter(p => Number(p.confirmedValue || 0) > 0)
+    .map(p =>
+      `<tr><td>${esc(p.nome)}</td><td class="num">${money(p.confirmedValue)}</td>
+       <td>${p.edited ? 'Editado' : p.confirmed ? 'Confirmado' : 'Pendente'}</td></tr>`
+    ).join('')
 
   return `
     <div class="grid g2">
@@ -560,6 +633,27 @@ function stepReview() {
       <tbody>${pays}</tbody>
     </table></div>
     ${footer()}`
+}
+
+export function associarIncerto(i, formId) {
+  const item = state.current.ocrIncerto?.[i]
+  if (!item) return
+  if (formId === 'ignorar') {
+    state.current.ocrIncerto.splice(i, 1)
+    render()
+    return
+  }
+  if (!formId) return
+  saveLearnedAssociation(item.texto, formId)
+  const p = state.current.pagamentos.find(x => x.formId === formId)
+  if (p) { p.iaValue = item.valor; p.confirmedValue = item.valor; p.confirmed = false; p.edited = false }
+  state.current.ocrIncerto.splice(i, 1)
+  toast(`"${item.texto}" → "${formId}" salvo. A IA usará essa associação nas próximas leituras.`)
+  render()
+}
+
+export function addPhoto() {
+  requestAnotherPhoto()
 }
 
 function updateDraftBadge() {

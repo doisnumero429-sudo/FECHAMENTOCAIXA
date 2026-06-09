@@ -1,19 +1,50 @@
 import { activeForms } from './state.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Aprendizado de associações via localStorage
+// ─────────────────────────────────────────────────────────────────────────────
+const LEARN_KEY = 'ocr_associations'
+
+export function getLearnedAssociations() {
+  try { return JSON.parse(localStorage.getItem(LEARN_KEY) || '{}') } catch { return {} }
+}
+
+export function saveLearnedAssociation(texto, formId) {
+  const data = getLearnedAssociations()
+  data[texto.toLowerCase()] = formId
+  localStorage.setItem(LEARN_KEY, JSON.stringify(data))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Prompt injetado em cada IA.
-// Inclui as chaves esperadas dinamicamente, baseadas nas formas cadastradas.
+// Inclui as chaves esperadas dinamicamente, baseadas nas formas cadastradas,
+// com nomes e aliases legíveis, e associações já aprendidas via localStorage.
 // ─────────────────────────────────────────────────────────────────────────────
 function buildPrompt() {
-  const chaves = activeForms()
-    .filter(f => f.ia)
-    .map(f => f.id)
-    .join(', ')
-  return `Você está analisando uma foto do relatório de fechamento de uma maquininha de cartão brasileira (POS/TEF).
-Extraia o VALOR TOTAL de cada forma de pagamento listada no relatório.
-Retorne SOMENTE um JSON válido, sem texto adicional, com exatamente estas chaves: ${chaves}, total
-Valores em reais como número decimal (ex: 150.50). Se não encontrar, use 0.
-Exemplo de saída: {"credito":150.50,"debito":89.00,"pix":45.00,"voucher":0,"total":284.50}`
+  const forms = activeForms().filter(f => f.ia)
+  const formsDesc = forms.map(f => {
+    const nomes = [f.nome, ...(f.aliases || [])].filter(Boolean).join(', ')
+    return `  "${f.id}": reconhece termos como ${nomes}`
+  }).join('\n')
+  const learned = getLearnedAssociations()
+  const learnedEntries = Object.entries(learned)
+  const learnedDesc = learnedEntries.length
+    ? `\nAssociações já confirmadas: ${learnedEntries.map(([t, id]) => `"${t}" é "${id}"`).join('; ')}`
+    : ''
+  const chaves = forms.map(f => `"${f.id}"`).join(', ')
+  return `Você é especialista em relatórios de maquininha POS/TEF de restaurantes brasileiros.
+Analise a foto do relatório de fechamento de caixa e extraia os VALORES TOTAIS do dia.
+
+Formas de pagamento esperadas:
+${formsDesc}
+${learnedDesc}
+
+Retorne SOMENTE um JSON com:
+- Chaves ${chaves}: valor numérico (0 se não encontrado)
+- "total": total geral do relatório
+- "_incerto": array [{"texto":"...","valor":0.00}] para itens encontrados mas não categorizáveis com confiança
+
+Exemplo: {"credito":1500.50,"debito":800.00,"pix":200.00,"voucher":0,"total":2500.50,"_incerto":[{"texto":"VISA DEBIT","valor":150.00}]}`
 }
 
 function toBase64(dataUrl) {
