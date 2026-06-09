@@ -2,6 +2,13 @@ import { state } from './state.js'
 import { money, esc, norm, toast, openPhotoModal } from './ui.js'
 import { loadCloudClosures } from './supabase.js'
 
+function normalizeAlerta(texto) {
+  return (texto || '')
+    .replace(/editado\(s\) após OCR/g, 'alterado(s) manualmente')
+    .replace(/Abertura diferente do troco final anterior\./g, 'Abertura diferente do fechamento anterior.')
+    .replace(/Sem foto do relatório da maquininha\./g, 'Sem foto do relatório da maquininha.')
+}
+
 function fmtDate(iso) {
   if (!iso) return ''
   const [y, m, d] = iso.split('-')
@@ -123,7 +130,7 @@ function buildCard(c, prevTrocoFinal) {
 
   // ── Alertas ──
   const alertasList = (c.alertas || []).map(a =>
-    `<div class="alert ${a.nivel === 'bad' ? 'bad' : 'warn'}" style="margin-top:8px">${esc(a.texto)}</div>`
+    `<div class="alert ${a.nivel === 'bad' ? 'bad' : 'warn'}" style="margin-top:8px">${esc(normalizeAlerta(a.texto))}</div>`
   ).join('')
 
   // ── Foto (suporta múltiplas) ──
