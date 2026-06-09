@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Logo "Meu Caixa" — Araçá Grill
+  Moeda dourada com monograma "AG" gravado em relevo escuro.
+  ViewBox 108×108dp; conteúdo mantido dentro da safe zone (18–90).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Halo externo levemente mais escuro para dar profundidade -->
+    <path android:pathData="M14,54 A40,40 0 1,0 94,54 A40,40 0 1,0 14,54 Z"
+        android:fillColor="#C47A00"
+        android:fillAlpha="0.35"/>
+
+    <!-- Moeda dourada principal — gradiente diagonal claro → escuro -->
+    <path android:pathData="M18,54 A36,36 0 1,0 90,54 A36,36 0 1,0 18,54 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="26" android:startY="22"
+                android:endX="82" android:endY="86"
+                android:startColor="#FFE08A"
+                android:endColor="#C47A00"/>
+        </aapt:attr>
+    </path>
+
+    <!-- Anel interno levemente mais escuro (bordas da moeda) -->
+    <path android:pathData="M20,54 A34,34 0 1,0 88,54 A34,34 0 1,0 20,54 Z"
+        android:fillColor="#00000000"
+        android:strokeColor="#C47A00"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.5"/>
+
+    <!-- ═══ Letra A ═══
+         Centrado em x≈37, altura y=27..81, traço espesso escuro -->
+    <path android:pathData="M20,81 L38,27 L56,81"
+        android:fillColor="#00000000"
+        android:strokeColor="#0D0F1A"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+    <!-- Travessa da letra A em y≈60 -->
+    <path android:pathData="M28,60 L48,60"
+        android:fillColor="#00000000"
+        android:strokeColor="#0D0F1A"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"/>
+
+    <!-- ═══ Letra G ═══
+         Centro (71,54) raio 14 — arco abre à direita, barra horizontal -->
+    <path android:pathData="M82,44 A14,14 0 1,0 85,54 L71,54"
+        android:fillColor="#00000000"
+        android:strokeColor="#0D0F1A"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+
+</vector>
