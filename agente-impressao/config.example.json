@@ -1,0 +1,6 @@
+{
+  "impressora_nome": "Bematech MP-4200 TH",
+  "pasta_saida": "C:\\ProgramData\\AracaGrill\\Impressora",
+  "intervalo_poll_segundos": 5,
+  "debug": false
+}
