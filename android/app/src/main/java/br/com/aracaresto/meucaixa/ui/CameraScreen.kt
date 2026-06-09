@@ -39,6 +39,10 @@ fun CameraScreen(
     val imageCapture = remember { ImageCapture.Builder().build() }
     val executor = remember { Executors.newSingleThreadExecutor() }
 
+    DisposableEffect(Unit) {
+        onDispose { executor.shutdown() }
+    }
+
     when (cameraState) {
         CameraState.PREVIEW -> {
             Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -84,8 +88,12 @@ fun CameraScreen(
                                     override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                                         val file = java.io.File(context.cacheDir, "foto_temp.jpg")
                                         val bmp = BitmapFactory.decodeFile(file.absolutePath)
+                                        if (bmp == null) {
+                                            erroMsg = "Não foi possível processar a imagem"
+                                            cameraState = CameraState.ERRO
+                                            return
+                                        }
                                         val baos = ByteArrayOutputStream()
-                                        // Comprimir para reduzir upload
                                         bmp.compress(Bitmap.CompressFormat.JPEG, 85, baos)
                                         capturedBytes = baos.toByteArray()
                                         capturedBitmap = bmp
@@ -115,7 +123,7 @@ fun CameraScreen(
                 Text("Os números estão nítidos?",
                     color = Color.White, style = MaterialTheme.typography.titleMedium)
                 if (bmp != null) {
-                    Image(bmp.asImageBitmap(), null,
+                    Image(bmp.asImageBitmap(), contentDescription = "Foto da maquininha",
                         modifier = Modifier.fillMaxWidth().weight(1f))
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

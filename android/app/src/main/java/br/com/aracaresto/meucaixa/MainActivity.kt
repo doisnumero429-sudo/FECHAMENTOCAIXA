@@ -19,7 +19,6 @@ import br.com.aracaresto.meucaixa.data.PedidoFoto
 import br.com.aracaresto.meucaixa.data.PedidoFotoRepository
 import br.com.aracaresto.meucaixa.ui.CameraScreen
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -46,7 +45,6 @@ class MainActivity : ComponentActivity() {
     fun MeuCaixaApp() {
         var pedidoPendente by remember { mutableStateOf<PedidoFoto?>(null) }
         var isPolling by remember { mutableStateOf(true) }
-        val scope = rememberCoroutineScope()
 
         // Polling: busca pedidos a cada 5 segundos
         LaunchedEffect(isPolling) {
@@ -71,7 +69,11 @@ class MainActivity : ComponentActivity() {
             CameraScreen(
                 pedidoId = pedido.id,
                 onEnviarFoto = { id, bytes ->
-                    runCatching { repository.enviarFoto(id, bytes) }
+                    try {
+                        Result.success(repository.enviarFoto(id, bytes))
+                    } catch (e: Exception) {
+                        Result.failure(e)
+                    }
                 },
                 onVoltarEspera = {
                     pedidoPendente = null
