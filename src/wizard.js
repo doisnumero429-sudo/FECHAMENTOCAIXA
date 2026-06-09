@@ -9,21 +9,21 @@ export function render() {
   renderSteps()
   document.getElementById('stepTitle').textContent = STEPS[state.step - 1][0]
   document.getElementById('stepHelp').textContent = STEPS[state.step - 1][1]
-  document.getElementById('counter').textContent = state.step + '/7'
+  document.getElementById('counter').textContent = state.step + '/8'
 
-  const stepFns = [stepOpening, stepMachine, stepCash, stepSangria, stepTotvs, stepResult, stepReview]
+  const stepFns = [stepOpening, stepAppReminder, stepMachine, stepCash, stepSangria, stepTotvs, stepResult, stepReview]
   document.getElementById('stepBody').innerHTML = stepFns[state.step - 1]()
 
   attachMoneyListeners()
 
   // Restaurar preview da foto se existir
-  if (state.step === 2 && state.current.fotoPreview) {
+  if (state.step === 3 && state.current.fotoPreview) {
     const img = document.getElementById('photoPreview')
     if (img) { img.src = state.current.fotoPreview; img.style.display = 'block' }
   }
 
-  // Iniciar pedido de foto ao entrar etapa 2 (apenas uma vez por fechamento)
-  if (state.step === 2 && !state.photoPollInterval && !state.currentPedidoId && !state.current.fotoUrl && !state.current.fotoPreview) {
+  // Iniciar pedido de foto ao entrar etapa 3 (apenas uma vez por fechamento)
+  if (state.step === 3 && !state.photoPollInterval && !state.currentPedidoId && !state.current.fotoUrl && !state.current.fotoPreview) {
     startPhotoRequest()
   }
 
@@ -42,7 +42,7 @@ function footer() {
   const back = state.step > 1
     ? `<button class="btn light" onclick="window.__wizard.prev()">← Voltar</button>`
     : `<button class="btn light" onclick="window.__wizard.startNew()">Novo fechamento</button>`
-  const fwd = state.step < 7
+  const fwd = state.step < 8
     ? `<button class="btn primary" onclick="window.__wizard.next()">Continuar →</button>`
     : `<button class="btn success" onclick="window.__wizard.finish()">Fechar caixa e salvar</button>`
   return `<div class="btnrow"><div>${back}</div><div>${fwd}</div></div>`
@@ -50,7 +50,7 @@ function footer() {
 
 export function next() {
   if (!validate(state.step)) return
-  state.step = Math.min(7, state.step + 1)
+  state.step = Math.min(8, state.step + 1)
   render()
 }
 
@@ -80,7 +80,7 @@ function validate(s) {
     if (!state.current.data) return toast('Informe a data.'), false
     compareOpening()
   }
-  if (s === 2) {
+  if (s === 3) {
     syncPay()
     stopPhotoRequest()
     const pend = state.current.pagamentos.filter(p => {
@@ -89,12 +89,12 @@ function validate(s) {
     })
     if (pend.length) return toast('Confirme cada valor antes de continuar.'), false
   }
-  if (s === 3) { calc() }
-  if (s === 4) {
+  if (s === 4) { calc() }
+  if (s === 5) {
     state.current.sangriaTroco = moneyInput(document.getElementById('sangria'))
     calc()
   }
-  if (s === 6) {
+  if (s === 7) {
     state.current.houveDiferenca = document.querySelector('input[name=dif]:checked')?.value === 'sim'
     state.current.obsDiferenca = document.getElementById('obsDif')?.value.trim() || ''
     calc()
@@ -107,7 +107,7 @@ function validate(s) {
 }
 
 export async function finish() {
-  if (!validate(6)) return
+  if (!validate(7)) return
   if (!state.sb) {
     toast('Não foi salvo: Supabase não conectado. Verifique a conexão e tente novamente.')
     return
@@ -195,7 +195,71 @@ export function confirmDivAbertura() {
   document.getElementById('openBox').innerHTML = openingBox()
 }
 
-// ─── Etapa 2 — Maquininha ────────────────────────────────────────────────────
+// ─── Etapa 2 — App Meu Caixa ─────────────────────────────────────────────────
+
+function stepAppReminder() {
+  return `
+    <div style="text-align:center;padding:16px 0 4px">
+      <div style="display:inline-flex;align-items:center;justify-content:center;
+                  width:96px;height:96px;border-radius:28px;
+                  background:linear-gradient(135deg,#fff7cc 0%,#f7a51c 50%,#ff6b1a 100%);
+                  box-shadow:0 22px 54px rgba(247,165,28,.42),0 6px 18px rgba(0,0,0,.16);
+                  margin-bottom:16px">
+        <svg viewBox="0 0 64 64" width="58" height="58" xmlns="http://www.w3.org/2000/svg">
+          <text x="32" y="44" font-family="Arial Black,Arial,sans-serif"
+                font-weight="900" font-size="26" fill="#111827" text-anchor="middle">AG</text>
+        </svg>
+      </div>
+      <div style="font-size:20px;font-weight:1000;margin-bottom:4px">Meu Caixa</div>
+      <div style="color:#6b7280;font-size:13px;margin-bottom:28px">App do celular da empresa</div>
+    </div>
+
+    <div class="alert blue" style="margin-bottom:20px">
+      <b>Abra o app Meu Caixa no celular antes de continuar.</b><br>
+      Ele precisa estar na tela "Aguardando pedido..." para receber a solicitação de foto.
+    </div>
+
+    <div style="display:grid;gap:16px;margin-bottom:24px">
+      <div style="display:flex;align-items:flex-start;gap:14px">
+        <div style="min-width:34px;height:34px;border-radius:50%;flex-shrink:0;
+                    background:linear-gradient(135deg,#f7a51c,#ff6b1a);
+                    display:flex;align-items:center;justify-content:center;
+                    font-weight:1000;color:#111827;font-size:15px;
+                    box-shadow:0 4px 12px rgba(247,165,28,.35)">1</div>
+        <div style="padding-top:4px">
+          <div style="font-weight:800;margin-bottom:3px">Pegue o celular da empresa</div>
+          <div style="color:#6b7280;font-size:13px;line-height:1.5">O aparelho que tem o ícone <b>AG</b> na tela inicial.</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:14px">
+        <div style="min-width:34px;height:34px;border-radius:50%;flex-shrink:0;
+                    background:linear-gradient(135deg,#f7a51c,#ff6b1a);
+                    display:flex;align-items:center;justify-content:center;
+                    font-weight:1000;color:#111827;font-size:15px;
+                    box-shadow:0 4px 12px rgba(247,165,28,.35)">2</div>
+        <div style="padding-top:4px">
+          <div style="font-weight:800;margin-bottom:3px">Toque no ícone e abra o app</div>
+          <div style="color:#6b7280;font-size:13px;line-height:1.5">Espere aparecer o spinner e a mensagem <b>"Aguardando pedido de foto..."</b></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:14px">
+        <div style="min-width:34px;height:34px;border-radius:50%;flex-shrink:0;
+                    background:linear-gradient(135deg,#f7a51c,#ff6b1a);
+                    display:flex;align-items:center;justify-content:center;
+                    font-weight:1000;color:#111827;font-size:15px;
+                    box-shadow:0 4px 12px rgba(247,165,28,.35)">3</div>
+        <div style="padding-top:4px">
+          <div style="font-weight:800;margin-bottom:3px">Clique em "Continuar →" aqui</div>
+          <div style="color:#6b7280;font-size:13px;line-height:1.5">O app receberá o pedido e abrirá a câmera automaticamente em alguns segundos.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hint">Se o app já estava aberto na tela de espera, pode clicar em Continuar diretamente.</div>
+    ${footer()}`
+}
+
+// ─── Etapa 3 — Maquininha ────────────────────────────────────────────────────
 
 function stepMachine() {
   const ocrBanner = {
@@ -307,7 +371,7 @@ export function applyJsonUI() {
   applyJson(document.getElementById('jsonIa')?.value || '')
 }
 
-// ─── Etapa 3 — Dinheiro ──────────────────────────────────────────────────────
+// ─── Etapa 4 — Dinheiro ──────────────────────────────────────────────────────
 
 function stepCash() {
   calc()
@@ -359,7 +423,7 @@ export function clearCash() {
   if (confirm('Limpar valores de dinheiro?')) { state.current.cash = []; calc(); render() }
 }
 
-// ─── Etapa 4 — Sangria Troco ─────────────────────────────────────────────────
+// ─── Etapa 5 — Sangria Troco ─────────────────────────────────────────────────
 
 function stepSangria() {
   calc()
@@ -379,7 +443,7 @@ function stepSangria() {
     ${footer()}`
 }
 
-// ─── Etapa 5 — Lançar TOTVS ──────────────────────────────────────────────────
+// ─── Etapa 6 — Lançar TOTVS ──────────────────────────────────────────────────
 
 function rowsFinal() {
   calc()
@@ -417,7 +481,7 @@ export function copyAll() {
   toast('Resumo copiado.')
 }
 
-// ─── Etapa 6 — Resultado ─────────────────────────────────────────────────────
+// ─── Etapa 7 — Resultado ─────────────────────────────────────────────────────
 
 function stepResult() {
   calc()
@@ -452,7 +516,7 @@ export function toggleDif() {
   document.getElementById('difArea')?.classList.toggle('hidden', !sim)
 }
 
-// ─── Etapa 7 — Salvar ────────────────────────────────────────────────────────
+// ─── Etapa 8 — Salvar ────────────────────────────────────────────────────────
 
 function stepReview() {
   buildAlerts()

@@ -14,6 +14,7 @@ export const DEFAULT_SHIFTS = [{id:'almoco',nome:'Almoço',ativo:true,ordem:1},{
 
 export const STEPS = [
   ['Abertura','Confirme operador, turno e valor inicial.'],
+  ['App Meu Caixa','Abra o app no celular antes de continuar.'],
   ['Maquininha','Aguarde a foto e confirme os valores.'],
   ['Dinheiro','Digite os valores da gaveta.'],
   ['Sangria troco','Procure no TOTVS.'],
