@@ -21,6 +21,13 @@ android {
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFzbnhwdnpoZXRyc2pqamt2eGl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA5NTYxODksImV4cCI6MjA5NjUzMjE4OX0.DmSC9fDmDD-Bjylkwubfuqxh6sxLk4Enxbtam3aWDgw\"")
     }
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
     buildFeatures {
         compose = true
         buildConfig = true
