@@ -635,27 +635,6 @@ function stepReview() {
     ${footer()}`
 }
 
-export function associarIncerto(i, formId) {
-  const item = state.current.ocrIncerto?.[i]
-  if (!item) return
-  if (formId === 'ignorar') {
-    state.current.ocrIncerto.splice(i, 1)
-    render()
-    return
-  }
-  if (!formId) return
-  saveLearnedAssociation(item.texto, formId)
-  const p = state.current.pagamentos.find(x => x.formId === formId)
-  if (p) { p.iaValue = item.valor; p.confirmedValue = item.valor; p.confirmed = false; p.edited = false }
-  state.current.ocrIncerto.splice(i, 1)
-  toast(`"${item.texto}" → "${formId}" salvo. A IA usará essa associação nas próximas leituras.`)
-  render()
-}
-
-export function addPhoto() {
-  requestAnotherPhoto()
-}
-
 function updateDraftBadge() {
   const d = document.getElementById('draft')
   if (d) d.textContent = state.sb ? 'Somente nuvem' : 'Nuvem indisponível'
