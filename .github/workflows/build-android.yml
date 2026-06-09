@@ -35,11 +35,13 @@ jobs:
         with:
           gradle-version: '8.6'
 
+      - name: Configurar SDK path
+        working-directory: android
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
       - name: Construir APK de debug
         working-directory: android
         run: gradle :app:assembleDebug --no-daemon --stacktrace
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
 
       - name: Renomear APK
         run: |
