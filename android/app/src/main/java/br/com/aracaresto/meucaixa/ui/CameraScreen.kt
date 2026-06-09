@@ -1,5 +1,7 @@
 package br.com.aracaresto.meucaixa.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.camera.core.*
@@ -18,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
@@ -31,12 +34,41 @@ fun CameraScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Verificar permissão antes de tentar abrir a câmera
+    val temPermissao = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.CAMERA
+    ) == PackageManager.PERMISSION_GRANTED
+
+    if (!temPermissao) {
+        Box(Modifier.fillMaxSize().background(Color(0xFF111827)), contentAlignment = Alignment.Center) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.padding(32.dp)
+            ) {
+                Text("⚠ Permissão de câmera necessária",
+                    color = Color(0xFFF87171),
+                    style = MaterialTheme.typography.titleMedium)
+                Text("Vá em:\nConfigurações → Apps → Meu Caixa\n→ Permissões → Câmera → Permitir",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Button(onClick = onVoltarEspera,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF7A51C))
+                ) { Text("Voltar", color = Color.Black) }
+            }
+        }
+        return
+    }
+
     var cameraState by remember { mutableStateOf(CameraState.PREVIEW) }
     var capturedBytes by remember { mutableStateOf<ByteArray?>(null) }
     var capturedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var erroMsg by remember { mutableStateOf("") }
 
     val imageCapture = remember { ImageCapture.Builder().build() }
+    // Executor apenas para takePicture (operação de fundo) — NÃO para bindToLifecycle
     val executor = remember { Executors.newSingleThreadExecutor() }
 
     DisposableEffect(Unit) {
@@ -46,11 +78,12 @@ fun CameraScreen(
     when (cameraState) {
         CameraState.PREVIEW -> {
             Box(Modifier.fillMaxSize().background(Color.Black)) {
-                // Preview da câmera
                 AndroidView(
                     factory = { ctx ->
                         val previewView = PreviewView(ctx)
                         val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+
+                        // CRÍTICO: bindToLifecycle deve rodar na main thread
                         cameraProviderFuture.addListener({
                             val cameraProvider = cameraProviderFuture.get()
                             val preview = Preview.Builder().build().also {
@@ -64,8 +97,10 @@ fun CameraScreen(
                                     preview,
                                     imageCapture
                                 )
-                            } catch (e: Exception) { /* ignorar */ }
-                        }, executor)
+                            } catch (e: Exception) {
+                                // câmera em uso por outro app ou hardware indisponível
+                            }
+                        }, ContextCompat.getMainExecutor(ctx)) // ← main thread, não executor de fundo
                         previewView
                     },
                     modifier = Modifier.fillMaxSize()
@@ -141,7 +176,6 @@ fun CameraScreen(
         }
 
         CameraState.ENVIANDO -> {
-            // Envia a foto para o Supabase
             LaunchedEffect(Unit) {
                 val bytes = capturedBytes
                 if (bytes != null) {
@@ -173,8 +207,7 @@ fun CameraScreen(
                         style = MaterialTheme.typography.titleMedium)
                     Text("O sistema de caixa já recebeu a imagem.",
                         color = Color.Gray, style = MaterialTheme.typography.bodyMedium)
-                    Button(
-                        onClick = onVoltarEspera,
+                    Button(onClick = onVoltarEspera,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF7A51C))
                     ) { Text("Voltar à tela de espera", color = Color.Black) }
                 }
@@ -189,8 +222,7 @@ fun CameraScreen(
                     Text("Ocorreu um erro", color = Color(0xFFEF4444),
                         style = MaterialTheme.typography.titleMedium)
                     Text(erroMsg, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-                    Button(
-                        onClick = { cameraState = CameraState.PREVIEW },
+                    Button(onClick = { cameraState = CameraState.PREVIEW },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF7A51C))
                     ) { Text("Tentar novamente", color = Color.Black) }
                 }
