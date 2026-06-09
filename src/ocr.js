@@ -24,20 +24,20 @@ export async function attemptOcr(dataUrl) {
   // Etapa 1 — IA em cascata
   if (aiConfigured()) {
     try {
-      toast('Analisando foto com IA...')
+      toast('Analisando a foto...')
       const ai = await analyzePhotoWithAI(dataUrl)
       if (ai) {
         const ok = applyAiResult(ai.result)
         state.current.ocrStatus = ok ? 'ok' : 'parcial'
         state.current.ocrText = `[${ai.provider}] ${JSON.stringify(ai.result)}`
         toast(ok
-          ? `${ai.provider} leu os valores. Confirme cada um.`
-          : `${ai.provider} respondeu, mas não encontrou valores. Verifique a foto.`)
+          ? 'Valores lidos. Confira cada um.'
+          : 'Não foram encontrados valores. Tente uma foto mais nítida.')
         const { render } = window.__appRender || {}
         render && render()
         return
       }
-      toast('IA não encontrou valores — usando Tesseract como fallback...')
+      toast('Tentando outra forma de leitura...')
     } catch (e) {
       console.warn('[OCR] Cascata IA falhou:', e)
     }
@@ -47,19 +47,19 @@ export async function attemptOcr(dataUrl) {
   const T = await loadTesseract()
   if (!T) {
     state.current.ocrStatus = 'erro'
-    toast('OCR não carregou. Verifique a conexão.')
+    toast('Não foi possível iniciar a leitura. Verifique a conexão.')
     return
   }
   try {
-    toast('Lendo foto com Tesseract (OCR local)...')
+    toast('Lendo a foto...')
     const res = await T.recognize(dataUrl, 'por')
     state.current.ocrText = res?.data?.text || ''
     const ok = applyOcrText(state.current.ocrText)
     state.current.ocrStatus = ok ? 'ok' : 'erro'
-    toast(ok ? 'OCR preencheu valores possíveis. Confira.' : 'OCR não encontrou valores claros.')
+    toast(ok ? 'Valores encontrados! Confira cada um.' : 'Não foram encontrados valores na foto.')
   } catch (e) {
     state.current.ocrStatus = 'erro'
-    toast('Falha no OCR. Preencha manualmente.')
+    toast('Não foi possível ler a foto. Preencha manualmente.')
   }
   const { render } = window.__appRender || {}
   render && render()
@@ -113,7 +113,7 @@ export function applyAiResult(obj) {
 }
 
 export function retryOcr() {
-  if (!state.current.fotoPreview) return toast('Envie uma foto primeiro.')
+  if (!state.current.fotoPreview) return toast('Envie uma foto primeiro para tentar a leitura.')
   state.current.ocrStatus = 'lendo'
   const { render } = window.__appRender || {}
   render && render()
@@ -148,7 +148,7 @@ export function applyOcrText(text) {
 
 export function applyJson(jsonStr) {
   let data
-  try { data = JSON.parse(jsonStr) } catch (e) { return toast('JSON inválido.') }
+  try { data = JSON.parse(jsonStr) } catch (e) { return toast('Dados inválidos. Verifique o formato.') }
   activeForms().forEach(f => {
     const keys = [f.id, f.nome, ...(f.aliases || [])].map(norm)
     Object.entries(data).forEach(([k, v]) => {
@@ -158,7 +158,7 @@ export function applyJson(jsonStr) {
       }
     })
   })
-  toast('Valores aplicados. Confirme um por um.')
+  toast('Valores aplicados. Confira cada um.')
   const { render } = window.__appRender || {}
   render && render()
 }

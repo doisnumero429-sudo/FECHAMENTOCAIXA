@@ -11,7 +11,7 @@ export async function startPhotoRequest() {
   stopPhotoRequest()
 
   if (!state.sb) {
-    updateRequestUI('offline', 'Nuvem indisponível. Use o envio manual abaixo.')
+    updateRequestUI('offline', 'Sem conexão com a nuvem. Use o envio manual abaixo.')
     return
   }
 
@@ -25,7 +25,7 @@ export async function startPhotoRequest() {
       terminal: state.current.terminal || 'CAIXA'
     })
   } catch (e) {
-    updateRequestUI('erro', 'Não consegui criar o pedido de foto. Use o envio manual abaixo.')
+    updateRequestUI('erro', 'Não foi possível solicitar a foto. Use o envio manual abaixo.')
     return
   }
 
@@ -40,7 +40,7 @@ export async function startPhotoRequest() {
         await handlePhotoArrived(row)
       } else if (row.status === 'erro') {
         stopPhotoRequest()
-        updateRequestUI('erro', 'O aplicativo Meu Caixa reportou um erro. Use o envio manual abaixo.')
+        updateRequestUI('erro', 'Ocorreu um erro no celular. Use o envio manual abaixo.')
       }
     } catch (e) {
       // silêncio — rede instável, vai tentar novamente
@@ -68,9 +68,9 @@ export async function handleManualAdvance() {
   state.current.alertas = state.current.alertas || []
   state.current.alertas.push({
     nivel: 'warn',
-    texto: 'Operador avançou sem foto do relatório (app Meu Caixa indisponível ou rede ruim).'
+    texto: 'Fechamento sem foto do relatório da maquininha.'
   })
-  toast('Continuando sem foto. Alerta registrado.')
+  toast('Continuando sem foto.')
   const { next } = window.__appRender || {}
   next && next()
 }
@@ -92,7 +92,7 @@ export async function handleFallbackUpload(event) {
   const reader = new FileReader()
   reader.onload = ev => {
     state.current.fotoPreview = ev.target.result
-    updateRequestUI('foto_local', 'Foto carregada do dispositivo. OCR em andamento...')
+    updateRequestUI('foto_local', 'Foto carregada. Lendo os valores...')
     const { render } = window.__appRender || {}
     render && render()
     setTimeout(() => {
@@ -121,7 +121,7 @@ async function handlePhotoArrived(row) {
   state.currentPedidoId = null
 
   const fotoIndex = state.current.fotos.length - 1
-  updateRequestUI('recebida', `Foto ${state.current.fotos.length} recebida! OCR em andamento...`)
+  updateRequestUI('recebida', `Foto ${state.current.fotos.length} recebida! Lendo os valores...`)
 
   const { render } = window.__appRender || {}
 
@@ -168,11 +168,11 @@ function updateRequestUI(status, msg) {
       <div style="margin-top:10px;text-align:center">
         <button class="btn light small" onclick="window.__photoRequest.handleManualAdvance()">Continuar sem foto →</button>
       </div>`,
-    recebida: `<div class="alert ok"><b>Foto recebida!</b> ${msg || 'OCR em andamento...'}</div>`,
+    recebida: `<div class="alert ok"><b>Foto recebida!</b> ${msg || 'Lendo os valores...'}</div>`,
     foto_local: `<div class="alert ok"><b>Foto carregada.</b> ${msg || ''}</div>`,
-    offline: `<div class="alert warn"><b>Nuvem indisponível.</b> ${msg || ''}</div>`,
-    erro: `<div class="alert bad"><b>Erro:</b> ${msg || 'Tente o envio manual.'}</div>`,
-    cancelado: `<div class="alert hint">Pedido cancelado.</div>`
+    offline: `<div class="alert warn"><b>Sem conexão.</b> ${msg || ''}</div>`,
+    erro: `<div class="alert bad">${msg || 'Não foi possível receber a foto. Tente o envio manual.'}</div>`,
+    cancelado: ``
   }
 
   box.innerHTML = messages[status] || ''

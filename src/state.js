@@ -17,7 +17,7 @@ export const STEPS = [
   ['App Meu Caixa','Abra o app no celular antes de continuar.'],
   ['Maquininha','Aguarde a foto e confirme os valores.'],
   ['Dinheiro','Digite os valores da gaveta.'],
-  ['Sangria troco','Procure no TOTVS.'],
+  ['Sangria / Troco','Procure no TOTVS.'],
   ['Lançar TOTVS','Copie os valores finais.'],
   ['Resultado','Informe se houve diferença.'],
   ['Salvar','Revise e salve.']
@@ -130,7 +130,7 @@ export function buildAlerts() {
     a.push({ nivel: 'warn', texto: 'Sem foto do relatório da maquininha.' })
   const edits = c.pagamentos.filter(p => p.edited).length
   if (edits)
-    a.push({ nivel: 'warn', texto: edits + ' valor(es) editado(s) após OCR.' })
+    a.push({ nivel: 'warn', texto: edits + ' valor(es) alterado(s) manualmente.' })
   if (c.houveDiferenca)
     a.push({ nivel: 'bad', texto: 'TOTVS informou diferença.' })
   c.alertas = a

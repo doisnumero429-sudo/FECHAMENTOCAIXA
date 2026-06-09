@@ -110,7 +110,7 @@ function validate(s) {
 export async function finish() {
   if (!validate(7)) return
   if (!state.sb) {
-    toast('Não foi salvo: Supabase não conectado. Verifique a conexão e tente novamente.')
+    toast('Sem conexão com a nuvem. Verifique a internet e tente novamente.')
     return
   }
   buildAlerts()
@@ -123,14 +123,14 @@ export async function finish() {
       fotoUrl = await uploadPhoto(state.photoFile, state.current.id)
       state.current.fotoUrl = fotoUrl
     } catch (e) {
-      toast('A foto não subiu para a nuvem. Verifique o bucket relatorios-caixa e tente novamente.')
+      toast('Não foi possível enviar a foto. Verifique a conexão e tente novamente.')
       return
     }
   }
 
   try {
     await saveClosure(state.current, fotoUrl)
-    toast('Fechamento salvo na nuvem.')
+    toast('Fechamento salvo.')
     await loadCloudClosures()
     const { renderClosures } = window.__history || {}
     renderClosures && renderClosures()
@@ -140,7 +140,7 @@ export async function finish() {
     state.step = 1
     render()
   } catch (e) {
-    toast('Não foi salvo na nuvem. Verifique se o SQL foi rodado no Supabase.')
+    toast('Não foi possível salvar. Verifique a conexão e tente novamente.')
   }
 }
 
@@ -171,23 +171,22 @@ function stepOpening() {
           value="${money(state.current.abertura || 0)}" placeholder="R$ 0,00"></div>
     </div>
     <div style="margin-top:14px" id="openBox">${openingBox()}</div>
-    <div class="hint"><b>Controle:</b> o sistema compara com o troco final do fechamento anterior e não mostra o valor anterior para o operador.</div>
     ${footer()}`
 }
 
 function openingBox() {
   if (state.current.aberturaOK === null)
-    return `<div class="alert blue">Ao continuar, o sistema verifica se a abertura bate com o fechamento anterior.</div>`
+    return `<div class="alert blue">Ao continuar, o sistema verifica se este valor bate com o troco deixado pelo caixa anterior.</div>`
   if (state.current.aberturaOK)
-    return `<div class="alert ok"><b>Abertura conferida:</b> bate com o fechamento anterior.</div>`
+    return `<div class="alert ok"><b>Tudo certo:</b> valor confere com o troco deixado pelo caixa anterior.</div>`
   return `<div class="alert bad">
-    <b>Abertura diferente do fechamento anterior.</b>
-    O valor anterior não será mostrado. Reconte e edite ou confirme mesmo assim.
+    <b>Valor diferente do troco deixado pelo caixa anterior.</b>
+    Reconte se necessário, ou confirme mesmo assim.
     <div class="btns" style="margin-top:10px">
-      <button class="btn light" onclick="document.getElementById('abertura').focus()">Recontar e editar</button>
+      <button class="btn light" onclick="document.getElementById('abertura').focus()">Recontar e corrigir</button>
       <button class="btn primary" onclick="window.__wizard.confirmDivAbertura()">Confirmar mesmo assim</button>
     </div>
-    ${state.current.aberturaConfirmada ? '<p><b>Divergência confirmada e enviada para conferência.</b></p>' : ''}
+    ${state.current.aberturaConfirmada ? '<p><b>Diferença confirmada e registrada.</b></p>' : ''}
   </div>`
 }
 
@@ -264,9 +263,9 @@ function stepAppReminder() {
 
 function stepMachine() {
   const ocrBanner = {
-    lendo: '<div class="alert blue"><b>OCR em andamento:</b> tentando ler a foto...</div>',
-    ok: '<div class="alert ok"><b>OCR concluído:</b> confira os valores preenchidos.</div>',
-    erro: '<div class="alert warn"><b>OCR não conseguiu preencher.</b> Preencha manualmente ou cole JSON.</div>'
+    lendo: '<div class="alert blue"><b>Lendo a foto...</b> aguarde um momento.</div>',
+    ok: '<div class="alert ok"><b>Foto lida!</b> Confira os valores preenchidos abaixo.</div>',
+    erro: '<div class="alert warn"><b>Não consegui ler os valores.</b> Preencha ou corrija manualmente.</div>'
   }[state.current.ocrStatus] || ''
 
   const cards = activeForms().map(f => {
@@ -286,16 +285,16 @@ function stepMachine() {
          </div>`
       : `<div style="min-height:48px;padding:13px 14px;background:#f9fafb;border:1px solid #f0f0f0;
                     border-radius:16px;font-weight:760;color:#9ca3af;display:flex;align-items:center;
-                    font-size:13px">Não usa IA</div>`
+                    font-size:13px">Inserir manualmente</div>`
 
     return `<div class="payment ${p.confirmed ? 'confirmed' : ''} ${p.edited ? 'edited' : ''}">
       <div class="payrow">
         <div>
           <span class="chip ${agent ? 'chipwarn' : f.ia ? 'chipblue' : ''}">${esc(f.nome)}</span>
-          <div style="font-size:12px;color:#6b7280;margin-top:8px">${agent ? 'Agente futuramente' : f.ia ? 'IA/OCR' : 'Manual'}</div>
+          <div style="font-size:12px;color:#6b7280;margin-top:8px">${agent ? 'Em breve' : f.ia ? 'Automático' : 'Manual'}</div>
         </div>
         <div class="field">
-          <label>Lido pela IA</label>
+          <label>Lido automaticamente</label>
           ${iaDisplay}
         </div>
         <div class="field">
@@ -307,12 +306,12 @@ function stepMachine() {
           <button class="btn success small" onclick="window.__wizard.confirmPay('${f.id}')">Confirmar</button>
         </div>
       </div>
-      ${p.edited ? '<div class="alert warn" style="margin-top:10px"><b>Editado:</b> valor diferente do lido pela IA.</div>' : ''}
+      ${p.edited ? '<div class="alert warn" style="margin-top:10px">Valor alterado manualmente.</div>' : ''}
     </div>`
   }).join('')
 
   const fotoStatus = state.current.fotoUrl
-    ? `<div class="alert ok" style="margin-top:10px"><b>Foto já recebida</b> e salva na nuvem.</div>`
+    ? `<div class="alert ok" style="margin-top:10px"><b>Foto recebida.</b></div>`
     : ''
 
   const fotosGallery = (state.current.fotos || []).length > 0
@@ -333,7 +332,7 @@ function stepMachine() {
 
   const incertoPanel = (state.current.ocrIncerto || []).length > 0
     ? `<div class="alert warn" style="margin-top:14px">
-         <b>&#9888; A IA encontrou valores não reconhecidos — associe para aprender:</b>
+         <b>&#9888; Encontramos valores que não identificamos — selecione a forma de pagamento correspondente:</b>
          <div style="margin-top:10px;display:grid;gap:10px">
            ${state.current.ocrIncerto.map((item, i) => `
              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px;background:rgba(255,255,255,.6);border-radius:10px">
@@ -363,16 +362,8 @@ function stepMachine() {
         ${ocrBanner}
         ${fotosGallery}
         <div class="btns" style="margin-top:10px">
-          <button class="btn secondary" onclick="window.__ocr.retryOcr()">Tentar OCR novamente</button>
-          <button class="btn light" onclick="window.__wizard.toggleJson()">Colar JSON da IA</button>
+          <button class="btn secondary" onclick="window.__ocr.retryOcr()">Tentar ler a foto novamente</button>
         </div>
-        <div id="jsonArea" class="hidden" style="margin-top:12px">
-          <textarea id="jsonIa" placeholder='{ "credito": "1250,00", "debito": "730,00" }'></textarea>
-          <button class="btn primary" onclick="window.__wizard.applyJsonUI()">Aplicar JSON</button>
-        </div>
-        ${state.current.ocrText
-          ? `<details style="margin-top:12px"><summary>Ver texto lido pelo OCR</summary><textarea readonly>${esc(state.current.ocrText)}</textarea></details>`
-          : ''}
         <details style="margin-top:14px">
           <summary>Enviar foto manualmente (alternativa)</summary>
           <div style="padding-top:12px">
@@ -385,7 +376,7 @@ function stepMachine() {
         </details>
       </div>
       <div>
-        <div class="alert blue"><b>Confirme individualmente:</b> se editar, o card fica marcado e isso vai para a conferência.</div>
+        <div class="alert blue">Confira e confirme cada valor. Se alterar algum, ele ficará marcado na conferência.</div>
         <div class="grid">${cards}</div>
         ${incertoPanel}
       </div>

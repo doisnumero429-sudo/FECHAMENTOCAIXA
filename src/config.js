@@ -272,26 +272,26 @@ function renderForms() {
         </div>
         <div class="field"><label>Tipo</label>
           <select onchange="window.__config.updForm('${f.id}','tipo',this.value)">
-            ${['cartao','pix','voucher','delivery','fiado','outro'].map(t =>
-              `<option value="${t}" ${f.tipo === t ? 'selected' : ''}>${t}</option>`
+            ${[['cartao','Cartão'],['pix','Pix'],['voucher','Voucher'],['delivery','Delivery'],['fiado','Fiado'],['outro','Outro']].map(([v,l]) =>
+              `<option value="${v}" ${f.tipo === v ? 'selected' : ''}>${l}</option>`
             ).join('')}
           </select>
         </div>
         <div class="field"><label>Origem</label>
           <select onchange="window.__config.updForm('${f.id}','origem',this.value)">
-            ${['manual','ia','agente'].map(t =>
-              `<option value="${t}" ${f.origem === t ? 'selected' : ''}>${t}</option>`
+            ${[['manual','Manual'],['ia','Automático'],['agente','Agente']].map(([v,l]) =>
+              `<option value="${v}" ${f.origem === v ? 'selected' : ''}>${l}</option>`
             ).join('')}
           </select>
         </div>
       </div>
       <div class="grid g3" style="margin-top:10px">
         <label><input type="checkbox" ${f.ativo ? 'checked' : ''} onchange="window.__config.updForm('${f.id}','ativo',this.checked)"> Ativo</label>
-        <label><input type="checkbox" ${f.ia ? 'checked' : ''} onchange="window.__config.updForm('${f.id}','ia',this.checked)"> Pode vir da IA</label>
+        <label><input type="checkbox" ${f.ia ? 'checked' : ''} onchange="window.__config.updForm('${f.id}','ia',this.checked)"> Preenchido automaticamente</label>
         <label><input type="checkbox" ${f.aparece ? 'checked' : ''} onchange="window.__config.updForm('${f.id}','aparece',this.checked)"> Aparece no fechamento</label>
       </div>
       <div class="field" style="margin-top:10px">
-        <label>Apelidos para OCR/TOTVS, separados por vírgula</label>
+        <label>Termos reconhecidos na foto (separados por vírgula)</label>
         <input value="${esc((f.aliases || []).join(', '))}" onchange="window.__config.updAliases('${f.id}',this.value)">
       </div>
       <div class="btns" style="margin-top:10px">
@@ -444,7 +444,7 @@ export function toggleConfigSections(open) {
 
 export function copySql() {
   navigator.clipboard?.writeText(SQL_TEXT)
-  toast('SQL copiado.')
+  toast('Configuração copiada.')
 }
 
 export async function saveConfig() {
