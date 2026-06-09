@@ -3,7 +3,7 @@ name: Construir APK — Meu Caixa
 on:
   push:
     branches: [main, 'claude/**']
-    paths: ['android/**']
+    paths: ['android/**', '.github/workflows/**']
   workflow_dispatch:
     inputs:
       motivo:

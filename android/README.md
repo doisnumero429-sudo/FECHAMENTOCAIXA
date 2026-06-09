@@ -13,24 +13,26 @@ Aplicativo simples para tirar foto do relatório da maquininha de cartão.
 
 ## Requisitos
 
-- Android Studio Hedgehog ou superior
 - Android 8.0 (API 26) ou superior
 - Permissão de câmera e internet
 
-## Configuração
+## Como instalar (sem Android Studio)
 
-1. Abra a pasta `android/` no Android Studio (File → Open → selecionar esta pasta)
-2. Aguarde o Gradle sincronizar
-3. Se tiver mais de um caixa, edite `TERMINAL_ID` em `app/build.gradle.kts`:
-   ```
-   buildConfigField("String", "TERMINAL_ID", "\"CAIXA_2\"")
-   ```
-4. Build → Run no dispositivo (celular físico com cabo USB ou Wi-Fi Debug)
+O APK é gerado automaticamente pelo GitHub Actions a cada atualização:
 
-## Build de produção
+1. Acesse **Releases** no repositório do GitHub
+2. Baixe o arquivo `MeuCaixa-YYYY-MM-DD.apk`
+3. Transfira para o celular (WhatsApp, cabo USB, Google Drive)
+4. No celular: **Configurações → Segurança → Instalar apps desconhecidos**
+5. Abra o `.apk` e instale
+6. Abra **Meu Caixa** — ele fica aguardando automaticamente
 
-1. Build → Generate Signed Bundle / APK
-2. Instalar o APK no celular da empresa
+## Configuração (múltiplos caixas)
+
+Se tiver mais de um caixa, edite `TERMINAL_ID` em `app/build.gradle.kts`:
+```
+buildConfigField("String", "TERMINAL_ID", "\"CAIXA_2\"")
+```
 
 ## Estrutura dos arquivos
 
