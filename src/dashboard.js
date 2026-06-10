@@ -13,9 +13,11 @@ let dashLoading = false
 const VIEWS = [
   ['geral', '📊 Visão geral'],
   ['formas', '💳 Formas'],
+  ['totvs', '🏦 Conciliação TOTVS'],
+  ['produtos', '🍽️ Produtos'],
   ['cancel', '❌ Cancelamentos'],
   ['sangrias', '💸 Sangrias & Cofre'],
-  ['concil', '⚖️ Conciliação']
+  ['concil', '⚖️ Status']
 ]
 
 const CLASS_LABEL = {
@@ -130,13 +132,50 @@ function aggregate(data) {
 
   const dias = Object.values(porDia).sort((a, b) => a.dia.localeCompare(b.dia))
 
+  // Fita de fechamento (TOTVS) — conciliação oficial, pessoas e produtos
+  const fitas = data?.fitas || []
+  let totalPessoas = 0, totalTransacoes = 0, totalComissoes = 0, totalCortesias = 0, totalDescontos = 0
+  const concilPorForma = {}     // forma → { bordero, caixa, diff }
+  const categorias = {}         // categoria → { qtd, valor }
+  const produtos = {}           // produto → qtd
+  for (const f of fitas) {
+    totalPessoas += num(f.numero_pessoas)
+    totalTransacoes += num(f.qtde_transacoes_pos)
+    totalComissoes += num(f.comissoes_total)
+    totalCortesias += num(f.cortesias_total)
+    totalDescontos += num(f.descontos_total)
+    for (const c of (f.conciliacao || [])) {
+      const k = c.forma || '—'
+      if (!concilPorForma[k]) concilPorForma[k] = { bordero: 0, caixa: 0, diff: 0 }
+      concilPorForma[k].bordero += num(c.bordero)
+      concilPorForma[k].caixa += num(c.caixa)
+      concilPorForma[k].diff += num(c.diff)
+    }
+    const pv = f.produtos_vendidos || {}
+    for (const cat of (pv.categorias || [])) {
+      const k = cat.nome || '—'
+      if (!categorias[k]) categorias[k] = { qtd: 0, valor: 0 }
+      categorias[k].qtd += num(cat.subtotal_qtde)
+      categorias[k].valor += num(cat.subtotal_valor)
+      for (const it of (cat.itens || [])) {
+        produtos[it.produto] = (produtos[it.produto] || 0) + num(it.qtde)
+      }
+    }
+  }
+  const ticketPessoa = totalPessoas > 0 ? a_div(totalFat, totalPessoas) : 0
+  const ticketTransacao = totalTransacoes > 0 ? a_div(totalFat, totalTransacoes) : 0
+
   return {
     dias, formas, sangPorTipo, cancelPorClasse, concilCount,
     totalFat, totalElet, totalDinheiro, totalGorjeta,
     totalCancelVal, totalCancelQtd, totalSangrias, nFechamentos,
-    cancelamentos, sangrias
+    cancelamentos, sangrias,
+    fitas, totalPessoas, totalTransacoes, totalComissoes, totalCortesias, totalDescontos,
+    concilPorForma, categorias, produtos, ticketPessoa, ticketTransacao
   }
 }
+
+function a_div(a, b) { return b ? a / b : 0 }
 
 // ─── Gráfico de barras (canvas, vanilla) ─────────────────────────────────────
 function drawBars(canvasId, labels, vals, color) {
@@ -206,6 +245,12 @@ function kpi(label, valor, cor, sub) {
 // ─── Views ───────────────────────────────────────────────────────────────────
 function viewGeral(a) {
   const melhorDia = a.dias.slice().sort((x, y) => y.faturamento - x.faturamento)[0]
+  const ticketCards = a.fitas.length
+    ? [
+        kpi('Ticket / pessoa', money(a.ticketPessoa), 'var(--blue)', `${a.totalPessoas} pessoa(s)`),
+        kpi('Ticket / transação POS', money(a.ticketTransacao), 'var(--text)', `${a.totalTransacoes} transação(ões)`)
+      ].join('')
+    : ''
   const cards = [
     kpi('Faturamento', money(a.totalFat), 'var(--blue)', `${a.nFechamentos} fechamento(s)`),
     kpi('Gorjeta (serviço)', money(a.totalGorjeta), 'var(--ok)'),
@@ -240,7 +285,7 @@ function viewGeral(a) {
       </table></div>`
     : `<div class="alert blue" style="margin-top:14px">Nenhum fechamento salvo neste período.</div>`
 
-  return `<div class="grid g3">${cards}</div>
+  return `<div class="grid g3">${cards}${ticketCards}</div>
     <div class="dash-sec"><h4>Faturamento por dia</h4><canvas id="dashCvFat" height="190"></canvas></div>
     ${consolidado}`
 }
@@ -346,6 +391,92 @@ function viewConcil(a) {
     <div class="grid g3">${cards}</div>`
 }
 
+function viewTotvs(a) {
+  if (!a.fitas.length) {
+    return `<div class="alert warn">
+      <b>Nenhuma fita TOTVS recebida neste período.</b>
+      O agente Windows precisa estar na versão mais recente para enviar o fechamento ao Supabase.
+      Após atualizar o agente, os dados aparecem aqui automaticamente.
+    </div>`
+  }
+  const concilEntries = Object.entries(a.concilPorForma).sort((x, y) => Math.abs(y[1].diff) - Math.abs(x[1].diff))
+  const totalBordero = concilEntries.reduce((s, [, v]) => s + v.bordero, 0)
+  const totalCaixa = concilEntries.reduce((s, [, v]) => s + v.caixa, 0)
+  const totalDiff = concilEntries.reduce((s, [, v]) => s + v.diff, 0)
+  const concilRows = concilEntries.map(([forma, o]) => {
+    const ok = Math.abs(o.diff) < 0.05
+    const diffColor = ok ? '#16a34a' : o.diff > 0 ? '#16a34a' : '#dc2626'
+    const diffSign = o.diff > 0.005 ? '+' : ''
+    return `<tr>
+      <td>${esc(forma)}</td>
+      <td class="num">${money(o.bordero)}</td>
+      <td class="num">${money(o.caixa)}</td>
+      <td class="num" style="color:${diffColor};font-weight:700">${diffSign}${money(o.diff)}</td>
+    </tr>`
+  }).join('')
+  const diffColor = Math.abs(totalDiff) < 0.10 ? '#16a34a' : '#dc2626'
+  const kpis = [
+    kpi('Comissões', money(a.totalComissoes), '#7c3aed', `${a.fitas.length} fita(s)`),
+    kpi('Cortesias', money(a.totalCortesias), '#0891b2'),
+    kpi('Descontos', money(a.totalDescontos), '#ea580c'),
+    kpi('Diferença acumulada', money(Math.abs(totalDiff)), diffColor,
+      Math.abs(totalDiff) < 0.10 ? 'Zerado' : totalDiff > 0 ? 'Sobra no borderô' : 'Falta no borderô')
+  ].join('')
+  return `<div class="grid g3" style="margin-bottom:14px">${kpis}</div>
+    <div class="dash-sec">
+      <h4>Conciliação TOTVS — Borderô vs Caixa (${a.fitas.length} fita(s))</h4>
+      <div class="table"><table>
+        <thead><tr><th>Forma</th><th class="num">Borderô (TOTVS)</th><th class="num">Caixa (PWA)</th><th class="num">Diferença</th></tr></thead>
+        <tbody>${concilRows || '<tr><td colspan="4" style="text-align:center;color:#bbb;padding:18px">Sem dados</td></tr>'}</tbody>
+        <tfoot><tr style="font-weight:800;background:#f5f7fb">
+          <td>TOTAL</td>
+          <td class="num">${money(totalBordero)}</td>
+          <td class="num">${money(totalCaixa)}</td>
+          <td class="num" style="color:${diffColor};font-weight:800">${money(totalDiff)}</td>
+        </tr></tfoot>
+      </table></div>
+    </div>`
+}
+
+function viewProdutos(a) {
+  if (!a.fitas.length) {
+    return `<div class="alert warn">
+      <b>Nenhuma fita TOTVS recebida neste período.</b>
+      Atualize o agente Windows para começar a receber o detalhamento de produtos.
+    </div>`
+  }
+  const catColors = ['#2563eb', '#0891b2', '#7c3aed', '#ea580c', '#16a34a', '#db2777']
+  const catEntries = Object.entries(a.categorias).sort((x, y) => y[1].valor - x[1].valor)
+  const maxCatValor = catEntries.length ? catEntries[0][1].valor : 0
+  const catBars = catEntries.length
+    ? catEntries.map(([nome, o], i) =>
+        barRow(`${nome} (${o.qtd} unid.)`, o.valor, maxCatValor, catColors[i % catColors.length])
+      ).join('')
+    : '<div class="alert blue">Sem categorias no período.</div>'
+  const prodEntries = Object.entries(a.produtos).sort((x, y) => y[1] - x[1]).slice(0, 30)
+  const maxProdQtd = prodEntries.length ? prodEntries[0][1] : 0
+  const prodRows = prodEntries.map(([nome, qtd]) => `<tr>
+    <td style="font-size:12.5px">${esc(nome)}</td>
+    <td class="num" style="font-weight:700;width:64px">${qtd}</td>
+    <td style="padding-left:8px;width:180px">
+      <div style="height:8px;border-radius:4px;background:#e5e7eb;overflow:hidden">
+        <div style="height:8px;border-radius:4px;background:#2563eb;width:${maxProdQtd > 0 ? ((qtd / maxProdQtd) * 100).toFixed(1) : 0}%"></div>
+      </div>
+    </td>
+  </tr>`).join('')
+  return `<div class="dash-sec">
+      <h4>Categorias — faturamento</h4>
+      ${catBars}
+    </div>
+    <div class="dash-sec" style="margin-top:14px">
+      <h4>Top produtos por quantidade</h4>
+      <div class="table"><table>
+        <thead><tr><th>Produto</th><th class="num">Qtde</th><th>Proporção</th></tr></thead>
+        <tbody>${prodRows || '<tr><td colspan="3" style="text-align:center;color:#bbb;padding:18px">Nenhum produto</td></tr>'}</tbody>
+      </table></div>
+    </div>`
+}
+
 // ─── Controles + render ──────────────────────────────────────────────────────
 function buildControls() {
   const tabs = VIEWS.map(([id, label]) =>
@@ -367,7 +498,7 @@ function renderBody() {
   if (dashLoading) { body.innerHTML = `<div class="alert blue"><b>Carregando dados do período…</b></div>`; return }
   if (!dashData) { body.innerHTML = `<div class="alert warn"><b>Nuvem indisponível.</b> Não foi possível carregar os dados.</div>`; return }
   const a = aggregate(dashData)
-  const views = { geral: viewGeral, formas: viewFormas, cancel: viewCancel, sangrias: viewSangrias, concil: viewConcil }
+  const views = { geral: viewGeral, formas: viewFormas, totvs: viewTotvs, produtos: viewProdutos, cancel: viewCancel, sangrias: viewSangrias, concil: viewConcil }
   body.innerHTML = (views[dashView] || viewGeral)(a)
   if (dashView === 'geral') {
     requestAnimationFrame(() =>
