@@ -3,6 +3,7 @@
 import { money, esc } from './ui.js'
 import { loadDashboardData } from './supabase.js'
 import { STATUS } from './conciliacao.js'
+import { CATALOGO_PRODUTOS } from './catalogo-produtos.js'
 
 let dashData = null
 let dashView = 'geral'
@@ -11,13 +12,14 @@ let dashFim = ''
 let dashLoading = false
 
 const VIEWS = [
-  ['geral', '📊 Visão geral'],
-  ['formas', '💳 Formas'],
-  ['totvs', '🏦 Conciliação TOTVS'],
-  ['produtos', '🍽️ Produtos'],
-  ['cancel', '❌ Cancelamentos'],
-  ['sangrias', '💸 Sangrias & Cofre'],
-  ['concil', '⚖️ Status']
+  ['geral',     '📊 Visão geral'],
+  ['formas',    '💳 Formas'],
+  ['totvs',     '🏦 Conciliação'],
+  ['produtos',  '🍽️ Produtos'],
+  ['cancel',    '❌ Cancelamentos'],
+  ['sangrias',  '💸 Sangrias'],
+  ['concil',    '⚖️ Status'],
+  ['insights',  '💡 Insights']
 ]
 
 const CLASS_LABEL = {
@@ -135,9 +137,10 @@ function aggregate(data) {
   // Fita de fechamento (TOTVS) — conciliação oficial, pessoas e produtos
   const fitas = data?.fitas || []
   let totalPessoas = 0, totalTransacoes = 0, totalComissoes = 0, totalCortesias = 0, totalDescontos = 0
-  const concilPorForma = {}     // forma → { bordero, caixa, diff }
-  const categorias = {}         // categoria → { qtd, valor }
-  const produtos = {}           // produto → qtd
+  const concilPorForma = {}   // forma → { bordero, caixa, diff }
+  const categorias = {}       // cat.nome → { qtd, valor, recCatalogo }
+  const produtosRec = {}      // produto → { qtd, receita, preco, grupo }
+
   for (const f of fitas) {
     totalPessoas += num(f.numero_pessoas)
     totalTransacoes += num(f.qtde_transacoes_pos)
@@ -153,12 +156,21 @@ function aggregate(data) {
     }
     const pv = f.produtos_vendidos || {}
     for (const cat of (pv.categorias || [])) {
-      const k = cat.nome || '—'
-      if (!categorias[k]) categorias[k] = { qtd: 0, valor: 0 }
-      categorias[k].qtd += num(cat.subtotal_qtde)
-      categorias[k].valor += num(cat.subtotal_valor)
+      const catNome = cat.nome || '—'
+      if (!categorias[catNome]) categorias[catNome] = { qtd: 0, valor: 0, recCatalogo: 0 }
+      categorias[catNome].qtd += num(cat.subtotal_qtde)
+      categorias[catNome].valor += num(cat.subtotal_valor)
       for (const it of (cat.itens || [])) {
-        produtos[it.produto] = (produtos[it.produto] || 0) + num(it.qtde)
+        const nome = it.produto
+        const qtd = num(it.qtde)
+        const entry = CATALOGO_PRODUTOS[nome]
+        const preco = entry?.p || 0
+        const receita = preco > 0 ? qtd * preco : 0
+        const grupo = entry?.g || catNome
+        if (!produtosRec[nome]) produtosRec[nome] = { qtd: 0, receita: 0, preco, grupo }
+        produtosRec[nome].qtd += qtd
+        produtosRec[nome].receita += receita
+        categorias[catNome].recCatalogo += receita
       }
     }
   }
@@ -171,7 +183,7 @@ function aggregate(data) {
     totalCancelVal, totalCancelQtd, totalSangrias, nFechamentos,
     cancelamentos, sangrias,
     fitas, totalPessoas, totalTransacoes, totalComissoes, totalCortesias, totalDescontos,
-    concilPorForma, categorias, produtos, ticketPessoa, ticketTransacao
+    concilPorForma, categorias, produtosRec, ticketPessoa, ticketTransacao
   }
 }
 
@@ -445,36 +457,217 @@ function viewProdutos(a) {
       Atualize o agente Windows para começar a receber o detalhamento de produtos.
     </div>`
   }
-  const catColors = ['#2563eb', '#0891b2', '#7c3aed', '#ea580c', '#16a34a', '#db2777']
-  const catEntries = Object.entries(a.categorias).sort((x, y) => y[1].valor - x[1].valor)
-  const maxCatValor = catEntries.length ? catEntries[0][1].valor : 0
+
+  // ── KPIs ─────────────────────────────────────────────────────────────────
+  const prodList = Object.values(a.produtosRec)
+  const totalRecCat = prodList.reduce((s, p) => s + p.receita, 0)
+  const totalQtdGeral = prodList.reduce((s, p) => s + p.qtd, 0)
+  const comPreco = prodList.filter(p => p.preco > 0).length
+  const totalProdos = prodList.length
+  const coverage = totalProdos > 0 ? ((comPreco / totalProdos) * 100).toFixed(0) : 0
+  const ticketItem = totalQtdGeral > 0 ? totalRecCat / totalQtdGeral : 0
+  const kpis = [
+    kpi('Receita estimada', money(totalRecCat), 'var(--blue)', 'qtde × preço cardápio'),
+    kpi('Itens vendidos', totalQtdGeral.toLocaleString('pt-BR'), 'var(--text)'),
+    kpi('Ticket / item', money(ticketItem), 'var(--text)'),
+    kpi('Cobertura catálogo', `${coverage}%`, Number(coverage) >= 80 ? 'var(--ok)' : '#ea580c',
+      `${comPreco} de ${totalProdos} produtos`)
+  ].join('')
+
+  // ── Categorias (usa valor TOTVS se disponível, senão estimativa catálogo) ─
+  const catColors = ['#2563eb', '#0891b2', '#7c3aed', '#ea580c', '#16a34a', '#db2777', '#d97706', '#be185d']
+  const catEntries = Object.entries(a.categorias)
+    .map(([nome, o]) => [nome, { ...o, exibir: o.valor > 0 ? o.valor : o.recCatalogo }])
+    .filter(([, o]) => o.exibir > 0 || o.qtd > 0)
+    .sort((x, y) => y[1].exibir - x[1].exibir)
+  const maxCat = catEntries.length ? catEntries[0][1].exibir : 0
+  const totalCatValor = catEntries.reduce((s, [, o]) => s + o.exibir, 0)
   const catBars = catEntries.length
-    ? catEntries.map(([nome, o], i) =>
-        barRow(`${nome} (${o.qtd} unid.)`, o.valor, maxCatValor, catColors[i % catColors.length])
-      ).join('')
+    ? catEntries.map(([nome, o], i) => {
+        const pct = totalCatValor > 0 ? ((o.exibir / totalCatValor) * 100).toFixed(1) : 0
+        const label = `${nome} · ${o.qtd} unid. · ${pct}%`
+        return barRow(label, o.exibir, maxCat, catColors[i % catColors.length])
+      }).join('')
     : '<div class="alert blue">Sem categorias no período.</div>'
-  const prodEntries = Object.entries(a.produtos).sort((x, y) => y[1] - x[1]).slice(0, 30)
-  const maxProdQtd = prodEntries.length ? prodEntries[0][1] : 0
-  const prodRows = prodEntries.map(([nome, qtd]) => `<tr>
+
+  // ── Top 20 por receita estimada ──────────────────────────────────────────
+  const topRec = Object.entries(a.produtosRec)
+    .filter(([, p]) => p.receita > 0)
+    .sort((x, y) => y[1].receita - x[1].receita)
+    .slice(0, 20)
+  const maxRec = topRec.length ? topRec[0][1].receita : 0
+  const recRows = topRec.map(([nome, p], i) => `<tr>
+    <td style="font-size:11px;color:#9099a6;width:24px">${i + 1}</td>
     <td style="font-size:12.5px">${esc(nome)}</td>
-    <td class="num" style="font-weight:700;width:64px">${qtd}</td>
-    <td style="padding-left:8px;width:180px">
-      <div style="height:8px;border-radius:4px;background:#e5e7eb;overflow:hidden">
-        <div style="height:8px;border-radius:4px;background:#2563eb;width:${maxProdQtd > 0 ? ((qtd / maxProdQtd) * 100).toFixed(1) : 0}%"></div>
+    <td style="font-size:11px;color:#9099a6">${esc(p.grupo)}</td>
+    <td class="num" style="width:54px;font-weight:700">${p.qtd}</td>
+    <td class="num" style="width:80px;color:#6b7280">${money(p.preco)}</td>
+    <td class="num" style="width:96px;font-weight:800;color:#2563eb">${money(p.receita)}</td>
+    <td style="width:100px;padding-left:8px">
+      <div style="height:6px;border-radius:3px;background:#e5e7eb;overflow:hidden">
+        <div style="height:6px;border-radius:3px;background:#2563eb;width:${maxRec > 0 ? ((p.receita / maxRec) * 100).toFixed(1) : 0}%"></div>
       </div>
     </td>
   </tr>`).join('')
-  return `<div class="dash-sec">
-      <h4>Categorias — faturamento</h4>
+
+  // ── Top 20 por quantidade ────────────────────────────────────────────────
+  const topQtd = Object.entries(a.produtosRec)
+    .sort((x, y) => y[1].qtd - x[1].qtd)
+    .slice(0, 20)
+  const maxQtd = topQtd.length ? topQtd[0][1].qtd : 0
+  const qtdRows = topQtd.map(([nome, p], i) => `<tr>
+    <td style="font-size:11px;color:#9099a6;width:24px">${i + 1}</td>
+    <td style="font-size:12.5px">${esc(nome)}</td>
+    <td class="num" style="font-weight:800;width:64px">${p.qtd}</td>
+    <td class="num" style="color:#6b7280;width:90px">${p.receita > 0 ? money(p.receita) : '<span style="color:#d1d5db">—</span>'}</td>
+    <td style="width:120px;padding-left:8px">
+      <div style="height:6px;border-radius:3px;background:#e5e7eb;overflow:hidden">
+        <div style="height:6px;border-radius:3px;background:#0891b2;width:${maxQtd > 0 ? ((p.qtd / maxQtd) * 100).toFixed(1) : 0}%"></div>
+      </div>
+    </td>
+  </tr>`).join('')
+
+  return `
+    <div class="grid g3" style="margin-bottom:16px">${kpis}</div>
+
+    <div class="dash-sec">
+      <h4>Faturamento por categoria</h4>
+      <div class="hint" style="margin-bottom:10px">Fonte: TOTVS (fita de fechamento). Percentual em relação ao total de produtos vendidos.</div>
       ${catBars}
     </div>
+
     <div class="dash-sec" style="margin-top:14px">
-      <h4>Top produtos por quantidade</h4>
+      <h4>Top 20 por receita estimada</h4>
+      <div class="hint" style="margin-bottom:8px">Calculado como quantidade × preço de venda do cardápio.</div>
       <div class="table"><table>
-        <thead><tr><th>Produto</th><th class="num">Qtde</th><th>Proporção</th></tr></thead>
-        <tbody>${prodRows || '<tr><td colspan="3" style="text-align:center;color:#bbb;padding:18px">Nenhum produto</td></tr>'}</tbody>
+        <thead><tr><th>#</th><th>Produto</th><th>Categoria</th><th class="num">Qtde</th><th class="num">Preço unit.</th><th class="num">Receita est.</th><th>Proporção</th></tr></thead>
+        <tbody>${recRows || '<tr><td colspan="7" style="text-align:center;color:#bbb;padding:18px">Nenhum produto com preço no catálogo</td></tr>'}</tbody>
+      </table></div>
+    </div>
+
+    <div class="dash-sec" style="margin-top:14px">
+      <h4>Top 20 por quantidade vendida</h4>
+      <div class="table"><table>
+        <thead><tr><th>#</th><th>Produto</th><th class="num">Qtde</th><th class="num">Receita est.</th><th>Proporção</th></tr></thead>
+        <tbody>${qtdRows || '<tr><td colspan="5" style="text-align:center;color:#bbb;padding:18px">Nenhum produto</td></tr>'}</tbody>
       </table></div>
     </div>`
+}
+
+// ─── Insights automáticos ────────────────────────────────────────────────────
+function viewInsights(a) {
+  const ins = []
+  const pct1 = (v, t) => t > 0 ? ((v / t) * 100).toFixed(1) : '0'
+
+  // Melhor e pior dia
+  if (a.dias.length >= 2) {
+    const sorted = a.dias.slice().sort((x, y) => y.faturamento - x.faturamento)
+    const melhor = sorted[0], pior = sorted[sorted.length - 1]
+    ins.push({ nivel: 'ok',
+      titulo: `Melhor dia: ${fmtDia(melhor.dia)} — ${money(melhor.faturamento)}`,
+      texto: `O pior dia foi ${fmtDia(pior.dia)} com ${money(pior.faturamento)}. Variação de ${pct1(melhor.faturamento - pior.faturamento, melhor.faturamento)}% entre os extremos.` })
+  }
+
+  // Ticket por pessoa
+  if (a.totalPessoas > 0) {
+    const nivel = a.ticketPessoa >= 90 ? 'ok' : a.ticketPessoa >= 60 ? 'blue' : 'warn'
+    ins.push({ nivel,
+      titulo: `Ticket médio: ${money(a.ticketPessoa)} / pessoa`,
+      texto: `${a.totalPessoas} pessoas atendidas, ${money(a.totalFat)} de faturamento total. Transações POS: ${a.totalTransacoes}.` })
+  }
+
+  // Forma de pagamento dominante
+  const formaTotal = Object.values(a.formas).reduce((s, v) => s + v, 0)
+  if (formaTotal > 0) {
+    const top2 = Object.entries(a.formas).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1]).slice(0, 2)
+    if (top2.length) {
+      const [k1, v1] = top2[0]
+      ins.push({ nivel: 'blue',
+        titulo: `Forma dominante: ${FORMA_LABEL[k1] || k1} (${pct1(v1, formaTotal)}%)`,
+        texto: `${money(v1)} dos ${money(formaTotal)} faturados. ` +
+          (top2[1] ? `Segunda maior: ${FORMA_LABEL[top2[1][0]] || top2[1][0]} com ${pct1(top2[1][1], formaTotal)}%.` : '') })
+    }
+  }
+
+  // Produto mais lucrativo e mais vendido
+  const prodRec = Object.entries(a.produtosRec)
+  if (prodRec.length > 0) {
+    const topR = prodRec.filter(([, p]) => p.receita > 0).sort((x, y) => y[1].receita - x[1].receita)[0]
+    const topQ = prodRec.sort((x, y) => y[1].qtd - x[1].qtd)[0]
+    if (topR) ins.push({ nivel: 'ok',
+      titulo: `Produto mais lucrativo: ${topR[0]}`,
+      texto: `${topR[1].qtd} unidades × ${money(topR[1].preco)} = ${money(topR[1].receita)} estimados no período.` })
+    if (topQ && topQ[0] !== topR?.[0]) ins.push({ nivel: 'blue',
+      titulo: `Produto mais pedido: ${topQ[0]}`,
+      texto: `${topQ[1].qtd} unidades vendidas. Receita estimada: ${topQ[1].receita > 0 ? money(topQ[1].receita) : 'não calculada (sem preço no catálogo)'}.` })
+  }
+
+  // Bebidas vs comida
+  const totalCatValor2 = Object.values(a.categorias).reduce((s, o) => s + (o.valor || o.recCatalogo || 0), 0)
+  const bebidas = num(a.categorias['BEBIDAS']?.valor) || num(a.categorias['BEBIDAS']?.recCatalogo)
+  if (totalCatValor2 > 0 && bebidas > 0) {
+    const pctBeb = parseFloat(pct1(bebidas, totalCatValor2))
+    ins.push({ nivel: pctBeb > 55 ? 'warn' : 'blue',
+      titulo: `Bebidas: ${pctBeb.toFixed(1)}% das vendas por categoria`,
+      texto: `${money(bebidas)} em bebidas de ${money(totalCatValor2)} total. ` +
+        (pctBeb > 55 ? 'Participação alta de bebidas — pode refletir eventos com show ou bar movimentado.' :
+          pctBeb < 20 ? 'Participação baixa de bebidas — refeição domina o mix.' : 'Mix equilibrado entre bebidas e alimentos.') })
+  }
+
+  // Cancelamentos
+  if (a.totalCancelQtd > 0) {
+    const pctC = parseFloat(pct1(a.totalCancelVal, a.totalFat))
+    const topCl = Object.entries(a.cancelPorClasse).sort((x, y) => y[1].valor - x[1].valor)[0]
+    ins.push({ nivel: pctC > 5 ? 'bad' : pctC > 2 ? 'warn' : 'ok',
+      titulo: `Cancelamentos: ${pctC.toFixed(1)}% do faturamento`,
+      texto: `${a.totalCancelQtd} item(ns) · ${money(a.totalCancelVal)}.` +
+        (topCl ? ` Principal motivo: ${CLASS_LABEL[topCl[0]] || topCl[0]} (${money(topCl[1].valor)}).` : '') })
+  }
+
+  // Sangrias — custos com pessoal x operacional
+  const custoPessoal = (a.sangPorTipo.musico || 0) + (a.sangPorTipo.extra || 0) + (a.sangPorTipo.vale || 0)
+  if (custoPessoal > 0 && a.totalFat > 0) {
+    const pctP = parseFloat(pct1(custoPessoal, a.totalFat))
+    ins.push({ nivel: pctP > 15 ? 'warn' : 'blue',
+      titulo: `Custo operacional (músicos + extras + vales): ${money(custoPessoal)} (${pctP.toFixed(1)}%)`,
+      texto: `Músico/banda: ${money(a.sangPorTipo.musico || 0)} · Extra/freelancer: ${money(a.sangPorTipo.extra || 0)} · Vale: ${money(a.sangPorTipo.vale || 0)}.` })
+  }
+
+  // Cortesias
+  if (a.totalCortesias > 0 && a.totalFat > 0) {
+    const pctCort = parseFloat(pct1(a.totalCortesias, a.totalFat))
+    ins.push({ nivel: pctCort > 3 ? 'warn' : 'blue',
+      titulo: `Cortesias: ${money(a.totalCortesias)} (${pctCort.toFixed(1)}% do faturamento)`,
+      texto: 'Contas ou itens liberados gratuitamente. Verifique se estão autorizados.' })
+  }
+
+  // Gorjeta
+  if (a.totalGorjeta > 0 && a.totalFat > 0) {
+    const pctG = parseFloat(pct1(a.totalGorjeta, a.totalFat))
+    ins.push({ nivel: 'ok',
+      titulo: `Taxa de serviço (gorjeta): ${money(a.totalGorjeta)} (${pctG.toFixed(1)}%)`,
+      texto: 'Cobrada nos cupons fiscais NFC-e. Incluída no faturamento total.' })
+  }
+
+  // Qualidade de conciliação
+  if (a.nFechamentos > 0) {
+    const nOk = (a.concilCount.sem_diferenca || 0) + (a.concilCount.tolerada || 0) + (a.concilCount.aprovada || 0)
+    const pctOk = parseFloat(pct1(nOk, a.nFechamentos))
+    ins.push({ nivel: pctOk >= 80 ? 'ok' : pctOk >= 60 ? 'warn' : 'bad',
+      titulo: `Fechamentos sem pendência: ${pctOk.toFixed(0)}% (${nOk} de ${a.nFechamentos})`,
+      texto: `${a.concilCount.pendente || 0} pendente(s) · ${a.concilCount.troca_modalidade || 0} troca de forma · ${a.concilCount.justificada || 0} justificada(s).` })
+  }
+
+  if (!ins.length)
+    return `<div class="alert blue">Sem dados suficientes para gerar insights neste período. Abra fechamentos para ver análises aqui.</div>`
+
+  const iconColor = { ok: '#16a34a', bad: '#dc2626', warn: '#d97706', blue: '#2563eb' }
+  return `<div style="display:grid;gap:10px">
+    ${ins.map(i => `<div class="alert ${i.nivel === 'ok' ? 'ok' : i.nivel === 'bad' ? 'bad' : i.nivel === 'blue' ? 'blue' : 'warn'}">
+      <b>${esc(i.titulo)}</b><br>
+      <span style="font-size:13px;line-height:1.6">${esc(i.texto)}</span>
+    </div>`).join('')}
+  </div>`
 }
 
 // ─── Controles + render ──────────────────────────────────────────────────────
@@ -498,7 +691,7 @@ function renderBody() {
   if (dashLoading) { body.innerHTML = `<div class="alert blue"><b>Carregando dados do período…</b></div>`; return }
   if (!dashData) { body.innerHTML = `<div class="alert warn"><b>Nuvem indisponível.</b> Não foi possível carregar os dados.</div>`; return }
   const a = aggregate(dashData)
-  const views = { geral: viewGeral, formas: viewFormas, totvs: viewTotvs, produtos: viewProdutos, cancel: viewCancel, sangrias: viewSangrias, concil: viewConcil }
+  const views = { geral: viewGeral, formas: viewFormas, totvs: viewTotvs, produtos: viewProdutos, cancel: viewCancel, sangrias: viewSangrias, concil: viewConcil, insights: viewInsights }
   body.innerHTML = (views[dashView] || viewGeral)(a)
   if (dashView === 'geral') {
     requestAnimationFrame(() =>
