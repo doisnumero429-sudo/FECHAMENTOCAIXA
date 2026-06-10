@@ -719,6 +719,91 @@ function _gerarInsights(comp, totalDiff, nfceTotal, nfceCount) {
   return ins
 }
 
+function _diagInnerHtml() {
+  const dig = state.current.digitacaoTotvs || {}
+  const formas = [
+    ...state.current.pagamentos
+      .filter(p => Number(p.confirmedValue || 0) > 0)
+      .map(p => ({ id: p.formId, label: p.nome, wizVal: Number(p.confirmedValue || 0) })),
+    { id: 'dinheiro', label: 'Dinheiro', wizVal: Number(state.current.dinheiroTotvs || 0) }
+  ]
+
+  const rows = formas.map(f => {
+    const l2Raw = dig[f.id]
+    const hasL2 = l2Raw !== undefined && l2Raw !== ''
+    const l2 = hasL2 ? Number(l2Raw) : 0
+    const err = hasL2 ? l2 - f.wizVal : null
+    const errHtml = err === null
+      ? '<span style="color:#d1d5db">—</span>'
+      : Math.abs(err) < 0.5
+        ? '<span style="color:#16a34a;font-weight:800">✓</span>'
+        : `<span style="color:#dc2626;font-weight:800">${err > 0 ? '+' : ''}${money(err)}</span>`
+    return `<tr>
+      <td>${esc(f.label)}</td>
+      <td class="num">${money(f.wizVal)}</td>
+      <td><input class="brl money" inputmode="decimal"
+        style="max-width:130px;text-align:right;font-size:13px;padding:6px 10px"
+        value="${hasL2 ? money(l2) : ''}" placeholder="R$ 0,00"
+        onchange="window.__wizard.changeDigitacaoTotvs('${esc(f.id)}',this.value)"></td>
+      <td class="num">${errHtml}</td>
+    </tr>`
+  }).join('')
+
+  const errosDetectados = formas.filter(f => {
+    const l2Raw = dig[f.id]
+    return l2Raw !== undefined && l2Raw !== '' && Math.abs(Number(l2Raw) - f.wizVal) > 0.5
+  })
+  const totalTypoErr = errosDetectados.reduce((s, f) => s + (Number(dig[f.id]) - f.wizVal), 0)
+  const hasAnyInput = formas.some(f => dig[f.id] !== undefined && dig[f.id] !== '')
+
+  let diagnoseHtml = ''
+  if (hasAnyInput && errosDetectados.length) {
+    diagnoseHtml = `
+      <div class="alert warn" style="margin-top:14px">
+        <b>Erro de digitação: ${totalTypoErr > 0 ? '+' : ''}${money(totalTypoErr)}</b><br>
+        <span style="font-size:13px;line-height:1.5">
+          Se os valores corretos tivessem sido digitados no TOTVS, a diferença seria
+          <b>${money(Math.abs(totalTypoErr))}</b> ${totalTypoErr > 0 ? 'menor' : 'maior'}.
+        </span>
+        <div style="margin-top:10px">
+          <button class="btn secondary small" onclick="window.__wizard.autofillExplicacao()">
+            <i data-lucide="clipboard-list"></i> Usar como explicação da diferença
+          </button>
+        </div>
+      </div>`
+  } else if (hasAnyInput) {
+    diagnoseHtml = `<div class="alert ok" style="margin-top:14px">Sem erro de digitação — valores conferem com a maquininha.</div>`
+  }
+
+  return `
+    <div class="hint" style="margin-bottom:12px">
+      Informe o que você digitou no TOTVS para cada forma. O sistema detecta erro de digitação e gera a
+      explicação automaticamente.
+    </div>
+    <div class="table">
+      <table>
+        <thead><tr>
+          <th>Forma</th>
+          <th class="num">Maquininha</th>
+          <th class="num">Digitado no TOTVS</th>
+          <th class="num">Erro</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${diagnoseHtml}`
+}
+
+function _buildDiagDigitacao() {
+  return `
+    <details style="margin-bottom:16px">
+      <summary style="cursor:pointer;font-weight:800;font-size:14px;padding:10px 0">
+        🔍 Verificar erro de digitação no TOTVS (opcional)
+      </summary>
+      <div id="diagInner" style="padding-top:12px">${_diagInnerHtml()}</div>
+    </details>`
+}
+
 function stepResult() {
   calc()
 
@@ -822,7 +907,7 @@ function stepResult() {
 
   return `
     <div class="grid g2">
-      <div>${conciliacaoPanel}</div>
+      <div>${conciliacaoPanel}${_buildDiagDigitacao()}</div>
       <div>
         <div class="summary" style="margin-bottom:16px">
           <small>Troco final deixado para o próximo caixa</small>
@@ -852,6 +937,48 @@ function stepResult() {
 export function toggleDif() {
   const sim = document.querySelector('input[name=dif]:checked')?.value === 'sim'
   document.getElementById('difArea')?.classList.toggle('hidden', !sim)
+}
+
+export function changeDigitacaoTotvs(formId, rawVal) {
+  if (!state.current.digitacaoTotvs) state.current.digitacaoTotvs = {}
+  state.current.digitacaoTotvs[formId] = parseMoney(rawVal)
+  const el = document.getElementById('diagInner')
+  if (el) {
+    el.innerHTML = _diagInnerHtml()
+    attachMoneyListeners()
+    requestAnimationFrame(() => window.__refreshIcons?.())
+  }
+}
+
+export function autofillExplicacao() {
+  const dig = state.current.digitacaoTotvs || {}
+  const formas = [
+    ...state.current.pagamentos
+      .filter(p => Number(p.confirmedValue || 0) > 0)
+      .map(p => ({ id: p.formId, label: p.nome, wizVal: Number(p.confirmedValue || 0) })),
+    { id: 'dinheiro', label: 'Dinheiro', wizVal: Number(state.current.dinheiroTotvs || 0) }
+  ]
+  const erros = formas.filter(f => {
+    const raw = dig[f.id]
+    return raw !== undefined && raw !== '' && Math.abs(Number(raw) - f.wizVal) > 0.5
+  })
+  if (!erros.length) { toast('Nenhum erro de digitação identificado.'); return }
+  const totalErr = erros.reduce((s, f) => s + (Number(dig[f.id]) - f.wizVal), 0)
+  const linhas = erros.map(f => {
+    const l2 = Number(dig[f.id])
+    const err = l2 - f.wizVal
+    return `${f.label}: digitado ${money(l2)} — correto ${money(f.wizVal)} (${err > 0 ? '+' : ''}${money(err)})`
+  })
+  const texto = `Erro de digitação no TOTVS:\n${linhas.join('\n')}\n\nSe digitados corretamente, a diferença seria ${money(Math.abs(totalErr))} ${totalErr > 0 ? 'menor' : 'maior'}.`
+  state.current.obsDiferenca = texto
+  state.current.houveDiferenca = true
+  const obsDifEl = document.getElementById('obsDif')
+  if (obsDifEl) obsDifEl.value = texto
+  const difArea = document.getElementById('difArea')
+  if (difArea) difArea.classList.remove('hidden')
+  const simRadio = document.querySelector('input[name=dif][value=sim]')
+  if (simRadio) simRadio.checked = true
+  toast('Explicação preenchida automaticamente.')
 }
 
 // ─── Etapa 8 — Salvar ────────────────────────────────────────────────────────
