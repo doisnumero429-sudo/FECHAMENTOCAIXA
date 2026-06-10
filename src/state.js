@@ -12,6 +12,15 @@ export const DEFAULT_FORMS = [
 export const DEFAULT_OPS = [{id:'operador_padrao',nome:'Operador',ativo:true,ordem:1}]
 export const DEFAULT_SHIFTS = [{id:'almoco',nome:'Almoço',ativo:true,ordem:1},{id:'noite',nome:'Noite',ativo:true,ordem:2}]
 
+// Tolerâncias de conciliação (em reais). _geral = diferença total do caixa.
+export const DEFAULT_TOLERANCIAS = [
+  {forma_id:'_geral',label:'Diferença total geral',valor:0.50,acao:'aceitar'},
+  {forma_id:'credito',label:'Crédito',valor:1.00,acao:'aceitar'},
+  {forma_id:'debito',label:'Débito',valor:1.00,acao:'aceitar'},
+  {forma_id:'pix',label:'PIX',valor:0.10,acao:'aceitar'},
+  {forma_id:'dinheiro',label:'Dinheiro',valor:2.00,acao:'confirmar'}
+]
+
 export const STEPS = [
   ['Abertura','Confirme operador, turno e valor inicial.'],
   ['App Meu Caixa','Abra o app no celular antes de continuar.'],
@@ -29,6 +38,7 @@ export const state = {
   forms: [],
   operators: [],
   shifts: [],
+  tolerancias: [],
   closures: [],
   current: null,
   photoFile: null,
@@ -95,6 +105,8 @@ export function newClosure() {
     houveDiferenca: false,
     obsDiferenca: '',
     digitacaoTotvs: {},
+    conciliacao: null,
+    conciliacaoStatus: 'sem_diferenca',
     alertas: [],
     fotos: [],
     ocrIncerto: [],
@@ -180,6 +192,7 @@ export function loadDefaults() {
   state.forms = clone(DEFAULT_FORMS)
   state.operators = clone(DEFAULT_OPS)
   state.shifts = clone(DEFAULT_SHIFTS)
+  state.tolerancias = clone(DEFAULT_TOLERANCIAS)
   state.closures = []
   newClosure()
 }

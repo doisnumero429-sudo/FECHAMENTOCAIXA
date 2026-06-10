@@ -4,8 +4,8 @@ import autoAnimate from '@formkit/auto-animate'
 import { state, loadDefaults, activeForms, activeOps, activeShifts, hydrate } from './state.js'
 import { closePhotoModal, photoModalBackdrop, toast } from './ui.js'
 import { initSupabase, syncFromCloud, loadCloudClosures } from './supabase.js'
-import { render, next, prev, startNew, finish, confirmDivAbertura, syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI, addCash, removeCash, clearCash, copy, copyAll, toggleDif, addPhoto, associarIncerto, changeSangriaTipo, changeDigitacaoTotvs, autofillExplicacao } from './wizard.js'
-import { renderConfig, updateConfigCounters, updSimple, moveSimple, removeSimple, addOperator, addShift, updForm, updAliases, moveForm, removeForm, addForm, resetForms, toggleConfigSections, copySql, saveConfig } from './config.js'
+import { render, next, prev, startNew, finish, confirmDivAbertura, syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI, addCash, removeCash, clearCash, copy, copyAll, toggleDif, addPhoto, associarIncerto, changeSangriaTipo, changeDigitacaoTotvs, autofillExplicacao, autofillCompensacao } from './wizard.js'
+import { renderConfig, updateConfigCounters, updSimple, moveSimple, removeSimple, addOperator, addShift, updForm, updAliases, moveForm, removeForm, addForm, resetForms, toggleConfigSections, copySql, saveConfig, updTolerancia, addTolerancia, removeTolerancia, resetTolerancias } from './config.js'
 import { renderClosures, openPhoto, refreshClosures, copyJson } from './history.js'
 import { retryOcr } from './ocr.js'
 import { handleManualAdvance, handleFallbackUpload } from './photo-request.js'
@@ -28,12 +28,13 @@ window.__wizard = {
   syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI,
   addCash, removeCash, clearCash, copy, copyAll, toggleDif,
   addPhoto, associarIncerto, changeSangriaTipo,
-  changeDigitacaoTotvs, autofillExplicacao
+  changeDigitacaoTotvs, autofillExplicacao, autofillCompensacao
 }
 window.__config = {
   updSimple, moveSimple, removeSimple, addOperator, addShift,
   updForm, updAliases, moveForm, removeForm, addForm, resetForms,
-  toggleConfigSections, copySql, saveConfig
+  toggleConfigSections, copySql, saveConfig,
+  updTolerancia, addTolerancia, removeTolerancia, resetTolerancias
 }
 window.__history = { renderClosures, openPhoto, refreshClosures, copyJson }
 window.__ocr = { retryOcr }

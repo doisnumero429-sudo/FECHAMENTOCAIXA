@@ -1,6 +1,41 @@
 import { state } from './state.js'
 import { money, esc, norm, toast, openPhotoModal } from './ui.js'
 import { loadCloudClosures } from './supabase.js'
+import { STATUS } from './conciliacao.js'
+
+const CONF_LABEL = { alta: 'alta confiança', media: 'média confiança', baixa: 'baixa confiança' }
+
+function statusChipStyle(nivel) {
+  return { ok: { c: '#065f46', bg: '#d1fae5' }, warn: { c: '#92400e', bg: '#fef3c7' }, bad: { c: '#991b1b', bg: '#fee2e2' } }[nivel] || { c: '#374151', bg: '#f3f4f6' }
+}
+
+// Chip de status na linha resumida — só quando há algo além de "sem diferença".
+function statusSummaryChip(c) {
+  const s = c.conciliacaoStatus
+  if (!s || s === 'sem_diferenca') return ''
+  const st = STATUS[s]
+  if (!st) return ''
+  const cs = statusChipStyle(st.nivel)
+  return `<span class="chip" style="color:${cs.c};background:${cs.bg};border-color:transparent">${esc(st.label)}</span>`
+}
+
+// Resumo da conciliação no card expandido (status + diferença comparável + compensações).
+function conciliacaoResumoHtml(c) {
+  const cc = c.conciliacao
+  if (!cc) return ''
+  const st = STATUS[c.conciliacaoStatus] || STATUS.sem_diferenca
+  const cs = statusChipStyle(st.nivel)
+  const comps = (cc.compensacoes || []).map(p =>
+    `<div style="font-size:13px;margin-top:6px">🔄 Troca <b>${esc(p.negLabel)}</b> ↔ <b>${esc(p.posLabel)}</b> · ~${money(p.valor)} <span style="color:#6b7280">(${CONF_LABEL[p.confianca] || p.confianca})</span></div>`
+  ).join('')
+  return `<div style="margin-top:10px;padding:12px;background:var(--soft);border-radius:12px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <span style="font-size:12px;font-weight:800;padding:4px 12px;border-radius:999px;color:${cs.c};background:${cs.bg}">${esc(st.label)}</span>
+      <span style="font-size:13px;color:#374151">Diferença comparável (cartões/PIX/dinheiro): <b>${money(cc.diffComparavel || 0)}</b></span>
+    </div>
+    ${comps}
+  </div>`
+}
 
 function normalizeAlerta(texto) {
   return (texto || '')
@@ -178,6 +213,7 @@ function buildCard(c, prevTrocoFinal) {
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         ${acaoManual ? `<span class="chip chipwarn" title="Valores editados manualmente">⚡ Manual</span>` : ''}
+        ${statusSummaryChip(c)}
         <span class="chip ${hasAlerts ? 'chipwarn' : 'chipblue'}">${hasAlerts ? '⚠ Alerta' : '✓ OK'}</span>
         <span style="color:#9ca3af;font-size:11px;margin-left:4px">▼</span>
       </div>
@@ -321,6 +357,7 @@ function buildCard(c, prevTrocoFinal) {
               ? `<div class="alert bad"><b>Sim, houve diferença.</b><br>${esc(c.obsDiferenca || '(sem observação)')}</div>`
               : `<div class="alert ok"><b>Não.</b> O TOTVS bateu com os valores informados.</div>`
             }
+            ${conciliacaoResumoHtml(c)}
           </div>
 
           ${alertasList ? `<div style="height:1px;background:var(--line)"></div><div>

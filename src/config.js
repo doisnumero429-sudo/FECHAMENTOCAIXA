@@ -1,5 +1,5 @@
-import { state, DEFAULT_FORMS, clone, uid, activeForms } from './state.js'
-import { money, esc, norm, toast } from './ui.js'
+import { state, DEFAULT_FORMS, DEFAULT_TOLERANCIAS, clone, uid, activeForms } from './state.js'
+import { money, parseMoney, esc, norm, toast } from './ui.js'
 import { saveConfigCloud, syncFromCloud } from './supabase.js'
 
 export const SQL_TEXT = `-- FECHAMENTO DE CAIXA ARAÇÁ GRILL — Schema completo
@@ -226,16 +226,118 @@ do $$ begin create policy caixa_audit_insert on public.caixa_auditoria for inser
 -- Storage
 do $$ begin create policy relatorios_caixa_read on storage.objects for select using (bucket_id = 'relatorios-caixa'); exception when duplicate_object then null; end $$;
 do $$ begin create policy relatorios_caixa_upload on storage.objects for insert with check (bucket_id = 'relatorios-caixa'); exception when duplicate_object then null; end $$;
+
+-- Tolerâncias de conciliação (quanto de diferença é aceitável por forma, em reais)
+create table if not exists public.caixa_tolerancias (
+  forma_id text primary key,
+  label text,
+  valor numeric(8,2) not null default 0.50,
+  acao text not null default 'aceitar',
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+insert into public.caixa_tolerancias (forma_id, label, valor, acao) values
+  ('_geral','Diferença total geral',0.50,'aceitar'),
+  ('credito','Crédito',1.00,'aceitar'),
+  ('debito','Débito',1.00,'aceitar'),
+  ('pix','PIX',0.10,'aceitar'),
+  ('dinheiro','Dinheiro',2.00,'confirmar')
+on conflict (forma_id) do nothing;
+alter table public.caixa_tolerancias enable row level security;
+do $$ begin create policy tolerancias_all on public.caixa_tolerancias for all using (true) with check (true); exception when duplicate_object then null; end $$;
 `
 
 export function renderConfig() {
   renderList('operatorsList', state.operators, 'operator')
   renderList('shiftsList', state.shifts, 'shift')
   renderForms()
+  renderTolerancias()
   updateConfigCounters()
 
   const sqlBox = document.getElementById('sqlBox')
   if (sqlBox) sqlBox.value = SQL_TEXT
+}
+
+const ACOES_TOL = [
+  ['aceitar', 'Aceitar automaticamente'],
+  ['confirmar', 'Exigir confirmação'],
+  ['gerente', 'Exigir gerente (em breve)']
+]
+
+function renderTolerancias() {
+  const el = document.getElementById('toleranciasList')
+  if (!el) return
+  const list = state.tolerancias?.length ? state.tolerancias : clone(DEFAULT_TOLERANCIAS)
+  // _geral sempre primeiro
+  const ordered = list.slice().sort((a, b) => (a.forma_id === '_geral' ? -1 : b.forma_id === '_geral' ? 1 : 0))
+  el.innerHTML = ordered.map(t => {
+    const geral = t.forma_id === '_geral'
+    return `<div class="config">
+      <div class="grid g3">
+        <div class="field"><label>${geral ? 'Diferença total do caixa' : 'Forma'}</label>
+          <input value="${esc(t.label || t.forma_id)}" readonly style="background:#f9fafb">
+        </div>
+        <div class="field"><label>Tolerar até (R$)</label>
+          <input class="brl money" inputmode="decimal" value="${money(t.valor || 0)}"
+            onchange="window.__config.updTolerancia('${esc(t.forma_id)}','valor',this.value)">
+        </div>
+        <div class="field"><label>Ação dentro da tolerância</label>
+          <select onchange="window.__config.updTolerancia('${esc(t.forma_id)}','acao',this.value)">
+            ${ACOES_TOL.map(([v, l]) => `<option value="${v}"${(t.acao || 'aceitar') === v ? ' selected' : ''}>${l}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      ${geral ? '' : `<div class="btns" style="margin-top:8px">
+        <button class="btn danger small" onclick="window.__config.removeTolerancia('${esc(t.forma_id)}')">Remover</button>
+      </div>`}
+    </div>`
+  }).join('')
+
+  // Controle para adicionar tolerância de uma forma ainda não listada
+  const addSel = document.getElementById('newTolForma')
+  if (addSel) {
+    const presentes = new Set(list.map(t => t.forma_id))
+    const opts = activeForms().filter(f => !presentes.has(f.id))
+    addSel.innerHTML = opts.length
+      ? '<option value="">Selecione a forma...</option>' + opts.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')
+      : '<option value="">Todas as formas já têm tolerância</option>'
+    addSel.disabled = !opts.length
+  }
+}
+
+export function updTolerancia(formaId, field, value) {
+  if (!state.tolerancias?.length) state.tolerancias = clone(DEFAULT_TOLERANCIAS)
+  const t = state.tolerancias.find(x => x.forma_id === formaId)
+  if (!t) return
+  if (field === 'valor') t.valor = parseMoney(value)
+  else t[field] = value
+}
+
+export function addTolerancia() {
+  const sel = document.getElementById('newTolForma')
+  const formaId = sel?.value
+  if (!formaId) return toast('Selecione uma forma.')
+  const f = activeForms().find(x => x.id === formaId)
+  if (!f) return
+  if (!state.tolerancias?.length) state.tolerancias = clone(DEFAULT_TOLERANCIAS)
+  if (state.tolerancias.find(t => t.forma_id === formaId)) return toast('Essa forma já tem tolerância.')
+  state.tolerancias.push({ forma_id: formaId, label: f.nome, valor: 0.5, acao: 'aceitar' })
+  renderTolerancias()
+  updateConfigCounters()
+}
+
+export function removeTolerancia(formaId) {
+  if (formaId === '_geral') return
+  state.tolerancias = (state.tolerancias || []).filter(t => t.forma_id !== formaId)
+  renderTolerancias()
+  updateConfigCounters()
+}
+
+export function resetTolerancias() {
+  if (!confirm('Restaurar tolerâncias padrão?')) return
+  state.tolerancias = clone(DEFAULT_TOLERANCIAS)
+  renderTolerancias()
+  updateConfigCounters()
 }
 
 function renderList(id, list, kind) {
@@ -310,6 +412,8 @@ export function updateConfigCounters() {
   if (op) op.textContent = `${state.operators.filter(x => x.ativo).length} ativos · ${state.operators.length} total`
   if (sh) sh.textContent = `${state.shifts.filter(x => x.ativo).length} ativos · ${state.shifts.length} total`
   if (fo) fo.textContent = `${state.forms.filter(x => x.ativo && x.aparece).length} no fechamento · ${state.forms.length} total`
+  const to = document.getElementById('toleranciasCount')
+  if (to) to.textContent = `${(state.tolerancias || []).length} regras`
 }
 
 function listFor(kind) { return kind === 'operator' ? state.operators : state.shifts }

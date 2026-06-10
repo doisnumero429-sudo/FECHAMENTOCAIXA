@@ -262,6 +262,40 @@
                 <summary>
                   <div class="config-summary">
                     <div>
+                      <span class="config-title">Tolerâncias de conciliação</span>
+                      <span class="config-desc">Quanto de diferença é aceitável por forma de pagamento, em reais.</span>
+                    </div>
+                    <div class="config-right">
+                      <span class="config-count" id="toleranciasCount">0 regras</span>
+                      <span class="config-chevron"></span>
+                    </div>
+                  </div>
+                </summary>
+                <div class="config-content">
+                  <div class="alert blue">
+                    Diferenças dentro da tolerância são tratadas como ruído (centavos, arredondamento) e não travam o fechamento.
+                  </div>
+                  <div class="grid" id="toleranciasList"></div>
+                  <div class="grid g2" style="margin-top:14px">
+                    <div class="field">
+                      <label>Adicionar tolerância para outra forma</label>
+                      <select id="newTolForma"><option value="">Selecione a forma...</option></select>
+                    </div>
+                    <div class="field">
+                      <label>&nbsp;</label>
+                      <button class="btn secondary" onclick="window.__config.addTolerancia()">Adicionar</button>
+                    </div>
+                  </div>
+                  <div class="btnrow">
+                    <button class="btn light" onclick="window.__config.resetTolerancias()">Restaurar tolerâncias padrão</button>
+                  </div>
+                </div>
+              </details>
+
+              <details class="config-section">
+                <summary>
+                  <div class="config-summary">
+                    <div>
                       <span class="config-title">SQL Supabase</span>
                       <span class="config-desc">Estrutura do banco, tabelas, storage e permissões.</span>
                     </div>

@@ -43,6 +43,13 @@ export async function syncFromCloud() {
     if (!r.error && r.data?.length)
       state.shifts = r.data.map(x => ({ id: x.id, nome: x.nome, ativo: x.ativo, ordem: x.ordem }))
   } catch (e) {}
+  try {
+    const r = await state.sb.from('caixa_tolerancias').select('*')
+    if (!r.error && r.data?.length)
+      state.tolerancias = r.data.map(x => ({
+        forma_id: x.forma_id, label: x.label, valor: Number(x.valor || 0), acao: x.acao || 'aceitar'
+      }))
+  } catch (e) {}
 }
 
 export async function loadCloudClosures() {
@@ -150,6 +157,12 @@ export async function saveConfigCloud() {
     })))
     await state.sb.from('caixa_operadores').upsert(state.operators.map(o => ({ id: o.id, nome: o.nome, ativo: o.ativo, ordem: o.ordem })))
     await state.sb.from('caixa_turnos').upsert(state.shifts.map(t => ({ id: t.id, nome: t.nome, ativo: t.ativo, ordem: t.ordem })))
+    // Tolerâncias: não-crítico — se a tabela ainda não existe, não bloqueia o resto.
+    try {
+      await state.sb.from('caixa_tolerancias').upsert((state.tolerancias || []).map(t => ({
+        forma_id: t.forma_id, label: t.label, valor: Number(t.valor || 0), acao: t.acao || 'aceitar'
+      })))
+    } catch (e) {}
     toast('Configurações salvas na nuvem.')
     return true
   } catch (e) {
@@ -278,6 +291,8 @@ export async function saveFechamentoResumo(current, sangriasTurno, cancelamentos
     sangrias_total: sangTotal,
     cancelamentos_qtde: cancelamentosTurno.length,
     cancelamentos_valor: cancelamentosTurno.reduce((sum, c) => sum + Number(c.valor || 0), 0),
-    houve_diferenca: current.houveDiferenca || false
+    houve_diferenca: current.houveDiferenca || false,
+    conciliacao_status: current.conciliacaoStatus || 'sem_diferenca',
+    conciliacao_diferenca_total: Number(current.conciliacao?.diffComparavel || 0)
   }, { onConflict: 'fechamento_id' })
 }

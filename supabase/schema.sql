@@ -395,3 +395,35 @@ do $$ begin create policy resumo_insert on public.caixa_fechamento_resumo for in
 do $$ begin create policy resumo_update on public.caixa_fechamento_resumo for update using (true); exception when duplicate_object then null; end $$;
 -- Exclusão bloqueada para anon
 do $$ begin create policy resumo_delete on public.caixa_fechamento_resumo for delete using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
+
+-- ─── Tolerâncias de conciliação (v4) ─────────────────────────────────────────
+-- Quanto de diferença é aceitável por forma de pagamento, em reais.
+-- forma_id = '_geral' define a tolerância da diferença total do caixa.
+-- Tabela de CONFIGURAÇÃO (não financeira) — RLS aberto, gerenciada pelo PWA.
+
+create table if not exists public.caixa_tolerancias (
+  forma_id text primary key,
+  label text,
+  valor numeric(8,2) not null default 0.50,
+  -- acao: aceitar | confirmar | gerente  (gerente exige aprovação — Fase 2)
+  acao text not null default 'aceitar',
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+
+insert into public.caixa_tolerancias (forma_id, label, valor, acao) values
+  ('_geral','Diferença total geral',0.50,'aceitar'),
+  ('credito','Crédito',1.00,'aceitar'),
+  ('debito','Débito',1.00,'aceitar'),
+  ('pix','PIX',0.10,'aceitar'),
+  ('dinheiro','Dinheiro',2.00,'confirmar')
+on conflict (forma_id) do nothing;
+
+alter table public.caixa_tolerancias enable row level security;
+do $$ begin create policy tolerancias_all on public.caixa_tolerancias for all using (true) with check (true); exception when duplicate_object then null; end $$;
+
+-- Colunas de conciliação no resumo (alimentam o dashboard)
+alter table public.caixa_fechamento_resumo
+  add column if not exists conciliacao_status text default 'sem_diferenca';
+alter table public.caixa_fechamento_resumo
+  add column if not exists conciliacao_diferenca_total numeric(12,2) not null default 0;

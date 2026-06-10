@@ -4,6 +4,7 @@ import { startPhotoRequest, stopPhotoRequest, handleFallbackUpload, handleManual
 import { retryOcr, applyJson, applyOcrText } from './ocr.js'
 import { saveLearnedAssociation } from './ai-ocr.js'
 import { uploadPhoto, saveClosure, loadCloudClosures, loadSangriasTurno, loadCancelamentosTurno, confirmSangrias, saveFechamentoResumo, loadNfceTurno } from './supabase.js'
+import { detectarCompensacoes, narrativaCompensacao, classificarDiff, tolDe, sugerirStatus, STATUS } from './conciliacao.js'
 
 export function render() {
   hydrate()
@@ -114,6 +115,7 @@ function validate(s) {
     state.current.trocoFinal = state.current.dinheiroContado
     if (state.current.houveDiferenca && !state.current.obsDiferenca)
       return toast('Explique a diferença.'), false
+    finalizarStatusConciliacao()
     buildAlerts()
   }
   return true
@@ -678,43 +680,40 @@ export function copyAll() {
 
 // ─── Etapa 7 — Resultado & Conciliação ───────────────────────────────────────
 
-function _gerarInsights(comp, totalDiff, nfceTotal, nfceCount) {
+function _gerarInsights(comp, totalDiff, nfceTotal, nfceCount, compensacoes) {
   const ins = []
-  const get = id => comp.find(c => c.id === id) || { diff: 0 }
-  const credD = get('credito').diff, debD = get('debito').diff, pixD = get('pix').diff
   const abs = Math.abs
+  const get = id => comp.find(c => c.id === id) || { diff: 0 }
 
-  // Troca crédito ↔ débito: diferenças opostas que se anulam, total fechado
-  if (abs(credD) > 0.5 && abs(debD) > 0.5 && abs(credD + debD) < 1 && abs(totalDiff) < 5) {
-    ins.push({ nivel: 'warn', emoji: '🔄',
-      titulo: 'Provável troca de Crédito e Débito',
-      texto: `Diferença de ${money(abs(credD))} em sentidos opostos — o total fecha. Isso é comum quando o atendente fecha uma mesa no TOTVS como <b>Crédito</b> sendo que o cliente pagou com <b>Débito</b> (ou vice-versa). Não afeta o caixa, mas entra errado nos relatórios.` })
-    return ins
-  }
+  // Compensações entre formas (motor) — viram insights acionáveis.
+  const usados = new Set()
+  compensacoes.forEach((p, idx) => {
+    usados.add(p.pos.id); usados.add(p.neg.id)
+    ins.push({ ...narrativaCompensacao(p), idx })
+  })
 
-  // PIX não registrado
-  if (pixD > 10 && abs(totalDiff) > 5)
+  // PIX a mais não explicado por compensação
+  const pixD = get('pix').diff
+  if (!usados.has('pix') && pixD > 10)
     ins.push({ nivel: 'warn', emoji: '📱',
       titulo: 'Possível PIX não registrado no TOTVS',
       texto: `O agente capturou ${money(abs(pixD))} a mais em PIX do que o informado. Um pagamento PIX pode ter sido recebido no celular mas não lançado no TOTVS.` })
 
-  // Total menor do que capturado — mesa sumiu
-  if (totalDiff > 20)
+  // Total muito acima/abaixo, sem compensação que explique
+  if (!compensacoes.length && totalDiff > 20)
     ins.push({ nivel: 'warn', emoji: '🔍',
       titulo: 'Agente capturou mais do que o informado',
       texto: `Diferença de ${money(totalDiff)}. Possíveis causas: mesa que consumiu mas saiu sem o TOTVS fechar a conta, cancelamento feito no sistema sem cancelar o cupom, ou NFC-e de um turno anterior incluído nesta data.` })
-
-  // Total maior do que capturado — lançamento duplicado
-  if (totalDiff < -20)
+  if (!compensacoes.length && totalDiff < -20)
     ins.push({ nivel: 'warn', emoji: '⚠️',
       titulo: 'Valor informado acima do capturado',
       texto: `Diferença de ${money(abs(totalDiff))}. Verifique se alguma forma de pagamento foi lançada em duplicidade, ou se um valor foi arredondado para cima ao informar no TOTVS.` })
 
-  // Tudo confere
-  if (!ins.length && abs(totalDiff) < 5)
+  // Tudo dentro da tolerância
+  if (!ins.length && abs(totalDiff) <= tolDe('_geral'))
     ins.push({ nivel: 'ok', emoji: '✅',
       titulo: 'Valores conferem com os NFC-e capturados',
-      texto: `Os ${nfceCount} cupons fiscais capturados totalizam ${money(nfceTotal)} — dentro da margem do que foi informado no fechamento.` })
+      texto: `Os ${nfceCount} cupons fiscais capturados totalizam ${money(nfceTotal)} — dentro da tolerância configurada.` })
 
   return ins
 }
@@ -835,30 +834,62 @@ function stepResult() {
   const wizTotal = wizMaqTotal + Number(state.current.dinheiroTotvs || 0)
   const totalDiff = nfceTotal - wizTotal
 
-  // Comparação por forma (apenas formas com correspondência direta no NFC-e)
+  // Comparação por forma — 4 formas que têm correspondência direta no NFC-e do agente.
+  // Dinheiro entra como comparação real: NFC-e em dinheiro × valor calculado para o TOTVS.
   const formas = [
-    { id: 'credito', label: 'Crédito' },
-    { id: 'debito',  label: 'Débito'  },
-    { id: 'pix',     label: 'PIX'     },
+    { id: 'credito',  label: 'Crédito'  },
+    { id: 'debito',   label: 'Débito'   },
+    { id: 'pix',      label: 'PIX'      },
+    { id: 'dinheiro', label: 'Dinheiro' }
   ]
   const comp = formas.map(({ id, label }) => {
-    const wiz = state.current.pagamentos.find(p => p.formId === id)
-    const wizVal = Number(wiz?.confirmedValue || 0)
+    const wizVal = id === 'dinheiro'
+      ? Number(state.current.dinheiroTotvs || 0)
+      : Number(state.current.pagamentos.find(p => p.formId === id)?.confirmedValue || 0)
     const agentVal = agg[id] || 0
     return { id, label, wizVal, agentVal, diff: agentVal - wizVal }
   })
 
-  const insights = _gerarInsights(comp, totalDiff, nfceTotal, nfceCount)
+  // Total comparável = só das formas presentes na tabela (evita ruído de voucher/assinadas/iFood).
+  const agentComp = comp.reduce((s, c) => s + c.agentVal, 0)
+  const wizComp = comp.reduce((s, c) => s + c.wizVal, 0)
+  const diffComp = agentComp - wizComp
 
-  const diffColor = d => Math.abs(d) < 0.5 ? '#16a34a' : Math.abs(d) < 20 ? '#d97706' : '#dc2626'
-  const diffHtml = d => Math.abs(d) < 0.5
-    ? `<span style="color:#16a34a;font-weight:800">✓</span>`
-    : `<span style="color:${diffColor(d)};font-weight:800">${d > 0 ? '+' : ''}${money(d)}</span>`
+  // Motor de compensação + insights
+  const compensacoes = detectarCompensacoes(comp.map(c => ({ id: c.id, label: c.label, diff: c.diff })))
+  const insights = _gerarInsights(comp, diffComp, nfceTotal, nfceCount, compensacoes)
+  const statusSugerido = sugerirStatus({ totalDiff: diffComp, comp, compensacoes })
+
+  // Guarda a análise no fechamento (persiste no payload e alimenta o status final)
+  state.current.conciliacao = {
+    nfceTotal, nfceCount, diffComparavel: diffComp, totalDiff,
+    comp: comp.map(c => ({ id: c.id, label: c.label, wizVal: c.wizVal, agentVal: c.agentVal, diff: c.diff })),
+    compensacoes: compensacoes.map(p => ({
+      posId: p.pos.id, posLabel: p.pos.label, negId: p.neg.id, negLabel: p.neg.label,
+      valor: p.valor, residuo: p.residuo, confianca: p.confianca
+    })),
+    statusSugerido
+  }
+
+  // Cor da diferença ciente da tolerância configurada por forma
+  const diffHtml = (d, id) => {
+    const cls = classificarDiff(d, id)
+    if (cls === 'zero') return `<span style="color:#16a34a;font-weight:800">✓</span>`
+    if (cls === 'tolerada')
+      return `<span style="color:#16a34a;font-weight:700" title="Dentro da tolerância de ${money(tolDe(id))}">${d > 0 ? '+' : ''}${money(d)} ✓</span>`
+    const color = Math.abs(d) < 20 ? '#d97706' : '#dc2626'
+    return `<span style="color:${color};font-weight:800">${d > 0 ? '+' : ''}${money(d)}</span>`
+  }
+
+  const st = STATUS[statusSugerido] || STATUS.pendente
+  const stStyle = { ok: { c: '#065f46', bg: '#d1fae5' }, warn: { c: '#92400e', bg: '#fef3c7' }, bad: { c: '#991b1b', bg: '#fee2e2' } }[st.nivel]
+  const statusChip = `<span style="font-size:12px;font-weight:800;padding:5px 12px;border-radius:999px;color:${stStyle.c};background:${stStyle.bg}">${esc(st.label)}</span>`
 
   const conciliacaoPanel = nfceCount > 0 ? `
     <div style="margin-bottom:16px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
         <b>Conciliação com NFC-e do agente</b>
+        ${statusChip}
         <span class="chip chipblue">${nfceCount} cupons · ${money(nfceTotal)}</span>
       </div>
       <div class="table">
@@ -870,34 +901,32 @@ function stepResult() {
             <th class="num">Diferença</th>
           </tr></thead>
           <tbody>
-            ${comp.map(c => `<tr>
-              <td>${esc(c.label)}</td>
+            ${comp.map(c => `<tr ${c.id === 'dinheiro' ? 'style="background:linear-gradient(135deg,#eff6ff,#dbeafe)"' : ''}>
+              <td ${c.id === 'dinheiro' ? 'style="color:#1e40af;font-weight:800"' : ''}>${esc(c.label)}</td>
               <td class="num">${money(c.agentVal)}</td>
               <td class="num">${money(c.wizVal)}</td>
-              <td class="num">${diffHtml(c.diff)}</td>
+              <td class="num">${diffHtml(c.diff, c.id)}</td>
             </tr>`).join('')}
-            <tr style="background:linear-gradient(135deg,#eff6ff,#dbeafe)">
-              <td style="color:#1e40af;font-weight:800">Dinheiro</td>
-              <td class="num" style="color:#9ca3af;font-size:12px">—</td>
-              <td class="num" style="color:#1e40af;font-weight:800">${money(state.current.dinheiroTotvs)}</td>
-              <td class="num"><span style="color:#6b7280;font-size:11px">fórmula</span></td>
-            </tr>
           </tbody>
           <tfoot><tr style="background:var(--soft)">
-            <td><b>Total</b></td>
-            <td class="num"><b>${money(nfceTotal)}</b></td>
-            <td class="num"><b>${money(wizTotal)}</b></td>
-            <td class="num"><b>${diffHtml(totalDiff)}</b></td>
+            <td><b>Total comparável</b></td>
+            <td class="num"><b>${money(agentComp)}</b></td>
+            <td class="num"><b>${money(wizComp)}</b></td>
+            <td class="num"><b>${diffHtml(diffComp, '_geral')}</b></td>
           </tr></tfoot>
         </table>
       </div>
-      <div class="hint" style="margin-top:6px">NFC-e capturados incluem todos os cupons de ${esc(state.current.data)}. Se houver dois turnos no dia, os valores podem incluir o turno anterior.</div>
+      <div class="hint" style="margin-top:6px">Voucher, assinadas e iFood não têm NFC-e e ficam fora desta comparação. NFC-e incluem todos os cupons de ${esc(state.current.data)} — se houver dois turnos, podem incluir o turno anterior.</div>
     </div>
     <div style="display:grid;gap:8px;margin-bottom:16px">
-      ${insights.map(i => `
-        <div class="alert ${i.nivel === 'ok' ? 'ok' : i.nivel === 'bad' ? 'bad' : 'warn'}">
-          <b>${i.emoji} ${esc(i.titulo)}</b><br>
-          <span style="font-size:13px;line-height:1.5">${i.texto}</span>
+      ${insights.map(ins => `
+        <div class="alert ${ins.nivel === 'ok' ? 'ok' : ins.nivel === 'bad' ? 'bad' : 'warn'}">
+          <b>${ins.emoji} ${esc(ins.titulo)}</b><br>
+          <span style="font-size:13px;line-height:1.5">${ins.texto}</span>
+          ${ins.idx != null ? `<div style="margin-top:10px">
+            <button class="btn secondary small" onclick="window.__wizard.autofillCompensacao(${ins.idx})">
+              <i data-lucide="clipboard-list"></i> Usar como explicação
+            </button></div>` : ''}
         </div>`).join('')}
     </div>` : `
     <div class="alert blue" style="margin-bottom:16px">
@@ -979,6 +1008,44 @@ export function autofillExplicacao() {
   const simRadio = document.querySelector('input[name=dif][value=sim]')
   if (simRadio) simRadio.checked = true
   toast('Explicação preenchida automaticamente.')
+}
+
+export function autofillCompensacao(i) {
+  const p = state.current.conciliacao?.compensacoes?.[i]
+  if (!p) return
+  const resto = p.residuo >= 0.005 ? ` Restou uma diferença de ${money(p.residuo)} que não fecha — confira se há mais de um lançamento.` : ''
+  const texto = `Provável troca de forma de pagamento entre ${p.negLabel} e ${p.posLabel}: cerca de ${money(p.valor)} informado como ${p.negLabel} foi registrado no sistema como ${p.posLabel}. As diferenças se compensam; não há falta real de caixa.${resto}`
+  state.current.obsDiferenca = texto
+  state.current.houveDiferenca = true
+  const obsDifEl = document.getElementById('obsDif')
+  if (obsDifEl) obsDifEl.value = texto
+  document.getElementById('difArea')?.classList.remove('hidden')
+  const simRadio = document.querySelector('input[name=dif][value=sim]')
+  if (simRadio) simRadio.checked = true
+  toast('Explicação preenchida automaticamente.')
+}
+
+// Define o status final da conciliação a partir da sugestão automática + ação do operador.
+function finalizarStatusConciliacao() {
+  const c = state.current
+  const sugerido = c.conciliacao?.statusSugerido || 'sem_diferenca'
+  const dig = c.digitacaoTotvs || {}
+  const usouDigitacao = (c.obsDiferenca || '').startsWith('Erro de digitação')
+    && Object.keys(dig).some(k => dig[k] !== '' && dig[k] != null)
+
+  let status
+  if (c.houveDiferenca) {
+    // Operador confirmou diferença na fita (a justificativa é obrigatória aqui).
+    if (usouDigitacao) status = 'digitacao'
+    else if (sugerido === 'troca_modalidade') status = 'troca_modalidade'
+    else status = 'justificada'
+  } else {
+    // Sem diferença confirmada: mantém apenas sugestões benignas.
+    status = sugerido === 'troca_modalidade' ? 'troca_modalidade'
+      : sugerido === 'tolerada' ? 'tolerada'
+      : 'sem_diferenca'
+  }
+  c.conciliacaoStatus = status
 }
 
 // ─── Etapa 8 — Salvar ────────────────────────────────────────────────────────
