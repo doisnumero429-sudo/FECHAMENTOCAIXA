@@ -349,7 +349,7 @@ export async function aprovarComGerente({ fechamentoId, gerenteId, pin, decisao,
 // Lê resumo, cancelamentos, sangrias e eventos NFC-e (gorjeta) num intervalo.
 export async function loadDashboardData(dataIni, dataFim) {
   if (!state.sb) return null
-  const out = { resumo: [], cancelamentos: [], sangrias: [], nfce: [] }
+  const out = { resumo: [], cancelamentos: [], sangrias: [], nfce: [], fitas: [] }
   try {
     const r = await state.sb.from('caixa_fechamento_resumo').select('*')
       .gte('data_turno', dataIni).lte('data_turno', dataFim).order('data_turno', { ascending: true })
@@ -370,6 +370,11 @@ export async function loadDashboardData(dataIni, dataFim) {
       .gte('data_turno', dataIni).lte('data_turno', dataFim)
     if (!r.error) out.nfce = r.data || []
   } catch (e) {}
+  try {
+    const r = await state.sb.from('caixa_fechamento_fita').select('*')
+      .gte('data_turno', dataIni).lte('data_turno', dataFim).order('data_turno', { ascending: true })
+    if (!r.error) out.fitas = r.data || []
+  } catch (e) { out.fitas = [] }
   return out
 }
 

@@ -530,6 +530,274 @@ def _parse_cancelamento(text: str, sha256: str, job_id: int) -> Optional[Dict]:
     }
 
 
+# ─── Fechamento de caixa (fita completa) ──────────────────────────────────────
+# Valor monetário BR, com sinal opcional (-308,59 ou 308,59-).
+_MONEY_RE = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}-?")
+
+
+def _money_token(tok: str) -> Optional[float]:
+    neg = tok.startswith("-") or tok.endswith("-")
+    v = _parse_decimal_br(tok.strip("-"))
+    if v is None:
+        return None
+    return -v if neg else v
+
+
+def _last_money(line: str) -> Optional[float]:
+    found = _MONEY_RE.findall(line)
+    return _money_token(found[-1]) if found else None
+
+
+def _slice(text: str, start: str, *ends: str) -> str:
+    """Recorta o trecho entre `start` e o primeiro dos `ends` que aparecer depois."""
+    si = text.find(start)
+    if si < 0:
+        return ""
+    si += len(start)
+    end = len(text)
+    for e in ends:
+        ei = text.find(e, si)
+        if ei >= 0:
+            end = min(end, ei)
+    return text[si:end]
+
+
+def _formas_da_secao(sec: str) -> Dict[str, Optional[float]]:
+    """Extrai crédito/débito/dinheiro/pix/total de uma seção ENTRADAS ou BORDERO."""
+    out: Dict[str, Optional[float]] = {"credito": None, "debito": None, "dinheiro": None, "pix": None, "total": None}
+    for line in sec.splitlines():
+        up = _ascii_fold(line)
+        if "CARTAO DE CREDITO" in up:
+            out["credito"] = _last_money(line)
+        elif "CARTAO DE DEBITO" in up:
+            out["debito"] = _last_money(line)
+        elif up.strip().startswith("DINHEIRO"):
+            out["dinheiro"] = _last_money(line)
+        elif "PIX" in up:
+            out["pix"] = _last_money(line)
+        elif up.strip().startswith("TOTAL") and out["total"] is None:
+            out["total"] = _last_money(line)
+    return out
+
+
+def _parse_conciliacao(sec: str) -> Tuple[list, Optional[float]]:
+    """Linhas tipo 'CARTAO DE CR  866,59 - 1.175,18' → {forma, bordero, caixa, diff}."""
+    itens = []
+    dif_total = None
+    for line in sec.splitlines():
+        up = _ascii_fold(line)
+        if "DIFERENCA TOTAL" in up:
+            dif_total = _last_money(line)
+            continue
+        m = re.match(r"\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ .\-]+?)\s+(-?\d[\d.]*,\d{2})\s*-\s*(-?\d[\d.]*,\d{2})\s*$", line)
+        if m:
+            bordero = _money_token(m.group(2))
+            caixa = _money_token(m.group(3))
+            diff = round((bordero or 0) - (caixa or 0), 2)
+            itens.append({"forma": m.group(1).strip(), "bordero": bordero, "caixa": caixa, "diff": diff})
+    return itens, dif_total
+
+
+def _parse_zera_caixa(sec: str) -> Dict[str, float]:
+    """Mapa label→valor de cada linha da seção ZERA CAIXA."""
+    out: Dict[str, float] = {}
+    for line in sec.splitlines():
+        v = _last_money(line)
+        if v is None:
+            continue
+        label = _MONEY_RE.sub("", line).replace("+", "").replace("-", "").replace("=", "").strip()
+        if label and not label.startswith("="):
+            out[label] = v
+    return out
+
+
+def _parse_lista_valor(sec: str) -> list:
+    """SANGRIAS/CORTESIAS: 'NOME ... 200,00' + linha '(descrição)' opcional abaixo."""
+    itens = []
+    linhas = sec.splitlines()
+    for i, line in enumerate(linhas):
+        up = _ascii_fold(line).strip()
+        if not up or up.startswith("=") or up.startswith("OPERADOR") or up.startswith("CLIENTE") or up.startswith("TOTAL"):
+            continue
+        v = _last_money(line)
+        if v is None:
+            continue
+        nome = _MONEY_RE.sub("", line).strip()
+        desc = ""
+        if i + 1 < len(linhas):
+            nxt = linhas[i + 1].strip()
+            if nxt.startswith("(") and nxt.endswith(")"):
+                desc = nxt.strip("()").strip()
+        itens.append({"nome": nome, "valor": v, "descricao": desc})
+    return itens
+
+
+def _parse_contas_canceladas(sec: str) -> list:
+    """'EVANDRO CARDOSO  36185' + 'MOT: REABERTURA DE CONTA' abaixo."""
+    itens = []
+    linhas = sec.splitlines()
+    for i, line in enumerate(linhas):
+        m = re.match(r"\s*(.+?)\s+(\d{3,})\s*$", line)
+        up = _ascii_fold(line).strip()
+        if not m or up.startswith("OPERADOR") or up.startswith("="):
+            continue
+        motivo = ""
+        if i + 1 < len(linhas):
+            mm = re.match(r"\s*MOT:\s*(.+)", linhas[i + 1])
+            if mm:
+                motivo = mm.group(1).strip()
+        itens.append({"operador": m.group(1).strip(), "cupom": m.group(2), "motivo": motivo})
+    return itens
+
+
+def _parse_produtos_vendidos(sec: str) -> Dict[str, Any]:
+    """Categorias com itens (produto, qtde) + subtotais; total geral no fim."""
+    categorias = []
+    total_qtde = None
+    total_valor = None
+    atual: Optional[Dict[str, Any]] = None
+    linhas = sec.splitlines()
+    for i, line in enumerate(linhas):
+        raw = line.rstrip()
+        up = _ascii_fold(raw).strip()
+        if not up:
+            continue
+        if up.startswith("TOTAL QTDE"):
+            mq = re.search(r"(\d+)\s*$", raw)
+            total_qtde = int(mq.group(1)) if mq else None
+            continue
+        if up.startswith("TOTAL PRODUTOS"):
+            total_valor = _last_money(raw)
+            continue
+        if up.startswith("SUB-TOTAL QTDE"):
+            if atual:
+                mq = re.search(r"(\d+)\s*$", raw)
+                atual["subtotal_qtde"] = int(mq.group(1)) if mq else None
+            continue
+        if up.startswith("SUB-TOTAL VALOR"):
+            if atual:
+                atual["subtotal_valor"] = _last_money(raw)
+                categorias.append(atual)
+                atual = None
+            continue
+        if up.startswith("PRODUTO") or up.startswith("="):
+            continue
+        # Cabeçalho de categoria: a próxima linha é uma régua de "===="
+        prox = linhas[i + 1].strip() if i + 1 < len(linhas) else ""
+        if prox.startswith("=") and not _MONEY_RE.search(raw):
+            atual = {"nome": raw.strip(), "itens": [], "subtotal_qtde": None, "subtotal_valor": None}
+            continue
+        # Linha de produto: "<nome> <qtde>"
+        mp = re.match(r"(.+?)\s+(\d+)\s*$", raw)
+        if atual and mp:
+            atual["itens"].append({"produto": mp.group(1).strip(), "qtde": int(mp.group(2))})
+    return {"categorias": categorias, "total_qtde": total_qtde, "total_valor": total_valor}
+
+
+def _parse_fechamento(text: str, sha256: str, job_id: int) -> Optional[Dict]:
+    """Extrai a fita completa de FECHAMENTO DE CAIXA DO PERIODO."""
+    def head(label: str) -> str:
+        m = re.search(label + r"[.\s]*([^\n]+)", text)
+        return m.group(1).strip() if m else ""
+
+    def head_int(label: str) -> Optional[int]:
+        m = re.search(label + r"[.\s]*(\d+)", text)
+        return int(m.group(1)) if m else None
+
+    # Datas de abertura/fechamento
+    ab_m = re.search(r"Abertura[.\s]*\n?\s*(\d{2}/\d{2}/\d{2,4}\s+\d{2}:\d{2}:\d{2})", text)
+    fe_m = re.search(r"Fechamento[.\s]*(\d{2}/\d{2}/\d{2,4}\s+\d{2}:\d{2}:\d{2})", text)
+    abertura_iso = _parse_datetime_br(ab_m.group(1)) if ab_m else None
+    fechamento_iso = _parse_datetime_br(fe_m.group(1)) if fe_m else None
+    base_iso = abertura_iso or fechamento_iso
+    if not base_iso:
+        return None
+    data_turno = _turno_date(base_iso)
+
+    entradas = _formas_da_secao(_slice(text, "ENTRADAS", "BORDERO"))
+    bordero = _formas_da_secao(_slice(text, "BORDERO", "CONCILIACAO"))
+    ent_sec = _slice(text, "ENTRADAS", "BORDERO")
+    concil_itens, concil_total = _parse_conciliacao(_slice(text, "CONCILIACAO", "ZERA CAIXA"))
+    zera = _parse_zera_caixa(_slice(text, "ZERA CAIXA", "FITA DETALHE", "QTDE TRANSACOES"))
+
+    def zera_get(*keys: str) -> float:
+        for k in keys:
+            for label, v in zera.items():
+                if _ascii_fold(label).startswith(_ascii_fold(k)):
+                    return v
+        return 0.0
+
+    # As listas detalhadas ficam DEPOIS de "FITA DETALHE"; escopar evita casar
+    # com as linhas SANGRIAS/CORTESIAS que também aparecem dentro de ZERA CAIXA.
+    di = text.find("FITA DETALHE")
+    detalhe_text = text[di:] if di >= 0 else text
+    sangrias = _parse_lista_valor(_slice(detalhe_text, "SANGRIAS", "CORTESIAS", "CONTAS CANCELADAS"))
+    cortesias = _parse_lista_valor(_slice(detalhe_text, "CORTESIAS", "CONTAS CANCELADAS", "PRODUTOS CANCELADOS"))
+    contas_canc = _parse_contas_canceladas(_slice(detalhe_text, "CONTAS CANCELADAS DO DIA", "PRODUTOS CANCELADOS"))
+    produtos_vendidos = _parse_produtos_vendidos(_slice(detalhe_text, "PRODUTOS VENDIDOS", "SISTEMA TOTVS", "V.04."))
+
+    qt_m = re.search(r"QTDE TRANSACOES POS\s+(\d+)", text)
+    pess_m = re.search(r"NUMERO PESSOAS\s+(\d+)", text)
+
+    return {
+        "data_turno": data_turno,
+        "abertura_dt": abertura_iso,
+        "fechamento_dt": fechamento_iso,
+        "operador_abertura": head(r"Operador Ab"),
+        "operador_fechamento": head(r"Operador Fech"),
+        "periodo": head_int(r"Periodo"),
+        "caixa_numero": head_int(r"Caixa No"),
+        "fech_numero": head_int(r"Fech\. No"),
+
+        "entradas_credito": entradas["credito"] or 0,
+        "entradas_debito": entradas["debito"] or 0,
+        "entradas_dinheiro": entradas["dinheiro"] or 0,
+        "entradas_pix": entradas["pix"] or 0,
+        "entradas_total": entradas["total"] or 0,
+        "inicio_periodo": _last_money(_grep_line(ent_sec, "INICIO PERIODO")) or 0,
+        "fim_periodo": _last_money(_grep_line(ent_sec, "FIM PERIODO")) or 0,
+        "total_final": _last_money(_grep_line(ent_sec, "TOTAL FINAL")) or 0,
+
+        "bordero_credito": bordero["credito"] or 0,
+        "bordero_debito": bordero["debito"] or 0,
+        "bordero_dinheiro": bordero["dinheiro"] or 0,
+        "bordero_pix": bordero["pix"] or 0,
+        "bordero_total": bordero["total"] or 0,
+
+        "conciliacao": concil_itens,
+        "diferenca_total": concil_total or 0,
+
+        "zera_caixa": zera,
+        "cortesias_total": zera_get("CORTESIAS"),
+        "assinadas_total": zera_get("ASSINADAS"),
+        "sangrias_total": zera_get("SANGRIAS"),
+        "sangrias_troco": zera_get("SANGRIAS TROCO"),
+        "descontos_total": zera_get("DESCONTOS"),
+        "comissoes_total": zera_get("COMISSOES"),
+        "produtos_total": zera_get("PRODUTOS"),
+
+        "qtde_transacoes_pos": int(qt_m.group(1)) if qt_m else 0,
+        "numero_pessoas": int(pess_m.group(1)) if pess_m else 0,
+
+        "sangrias": sangrias,
+        "cortesias": cortesias,
+        "contas_canceladas": contas_canc,
+        "produtos_vendidos": produtos_vendidos,
+
+        "raw_text": text[:12000],
+        "job_id": job_id,
+        "sha256": sha256,
+    }
+
+
+def _grep_line(sec: str, needle: str) -> str:
+    folded = _ascii_fold(needle)
+    for line in sec.splitlines():
+        if folded in _ascii_fold(line):
+            return line
+    return ""
+
+
 # ─── Print job info ───────────────────────────────────────────────────────────
 
 JOB_STATUS_NAMES = {
@@ -1108,7 +1376,18 @@ class SpoolGuard:
             else:
                 self.log.write(f"Cancelamento job={job_id}: não foi possível extrair campos essenciais")
 
-        # FECHAMENTO, CONFERENCIA, TRANSFERENCIA, CONTA_ASSINADA, SENHA, DESCONHECIDO:
+        elif doc_type == "FECHAMENTO":
+            record = _parse_fechamento(text, sha256, job_id)
+            if record:
+                self.sb_sender.enqueue("caixa_fechamento_fita", record)
+                self.log.write(
+                    f"Fechamento job={job_id}: fech.{record.get('fech_numero')} "
+                    f"pessoas={record.get('numero_pessoas')} dif={record.get('diferenca_total')}"
+                )
+            else:
+                self.log.write(f"Fechamento job={job_id}: não foi possível extrair campos essenciais")
+
+        # CONFERENCIA, TRANSFERENCIA, CONTA_ASSINADA, SENHA, DESCONHECIDO:
         # apenas logado, sem envio ao Supabase por enquanto.
 
     def append_to_aggregate(

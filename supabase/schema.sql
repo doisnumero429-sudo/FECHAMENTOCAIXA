@@ -340,6 +340,76 @@ alter table public.caixa_cancelamentos add column if not exists fechamento_id te
 alter table public.caixa_cancelamentos add column if not exists motivo_editado text;
 alter table public.caixa_cancelamentos add column if not exists classificacao text;
 
+-- ─── Fita de FECHAMENTO DE CAIXA (v5) ────────────────────────────────────────
+-- A fita rica que o TOTVS imprime ao fechar o período. O agente parseia e envia.
+-- Guarda os totais em colunas + seções complexas em JSONB + raw_text de segurança.
+create table if not exists public.caixa_fechamento_fita (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamptz not null default now(),
+  data_turno date not null,
+  abertura_dt timestamptz,
+  fechamento_dt timestamptz,
+  operador_abertura text,
+  operador_fechamento text,
+  periodo integer,
+  caixa_numero integer,
+  fech_numero integer,
+
+  -- ENTRADAS (o que o TOTVS registrou no caixa)
+  entradas_credito numeric(12,2) not null default 0,
+  entradas_debito numeric(12,2) not null default 0,
+  entradas_dinheiro numeric(12,2) not null default 0,
+  entradas_pix numeric(12,2) not null default 0,
+  entradas_total numeric(12,2) not null default 0,
+  inicio_periodo numeric(12,2) not null default 0,
+  fim_periodo numeric(12,2) not null default 0,
+  total_final numeric(12,2) not null default 0,
+
+  -- BORDERO (o que a adquirente/POS reportou de verdade)
+  bordero_credito numeric(12,2) not null default 0,
+  bordero_debito numeric(12,2) not null default 0,
+  bordero_dinheiro numeric(12,2) not null default 0,
+  bordero_pix numeric(12,2) not null default 0,
+  bordero_total numeric(12,2) not null default 0,
+
+  -- CONCILIAÇÃO oficial do TOTVS: [{forma, bordero, caixa, diff}]
+  conciliacao jsonb,
+  diferenca_total numeric(12,2) not null default 0,
+
+  -- ZERA CAIXA (mapa label→valor) + os principais já extraídos
+  zera_caixa jsonb,
+  cortesias_total numeric(12,2) not null default 0,
+  assinadas_total numeric(12,2) not null default 0,
+  sangrias_total numeric(12,2) not null default 0,
+  sangrias_troco numeric(12,2) not null default 0,
+  descontos_total numeric(12,2) not null default 0,
+  comissoes_total numeric(12,2) not null default 0,
+  produtos_total numeric(12,2) not null default 0,
+
+  -- FITA DETALHE
+  qtde_transacoes_pos integer not null default 0,
+  numero_pessoas integer not null default 0,
+
+  -- Listas detalhadas
+  sangrias jsonb,              -- [{nome(operador), valor, descricao}] descricao = "EXTRA ÂNGELO MÚSICA TN"
+  cortesias jsonb,             -- [{nome(cliente), valor}]
+  contas_canceladas jsonb,     -- [{operador, cupom, motivo}] (reaberturas etc.)
+  produtos_vendidos jsonb,     -- {categorias:[{nome, itens:[{produto, qtde}], subtotal_qtde, subtotal_valor}], total_qtde, total_valor}
+
+  raw_text text,
+  job_id integer,
+  sha256 text unique
+);
+
+create index if not exists idx_fita_data_turno on public.caixa_fechamento_fita(data_turno desc);
+
+-- RLS: leitura e inserção livres (agente usa anon key); edição/exclusão só service_role
+alter table public.caixa_fechamento_fita enable row level security;
+do $$ begin create policy fita_select on public.caixa_fechamento_fita for select using (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy fita_insert on public.caixa_fechamento_fita for insert with check (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy fita_update on public.caixa_fechamento_fita for update using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
+do $$ begin create policy fita_delete on public.caixa_fechamento_fita for delete using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
+
 -- ─── Resumo de fechamento — base para o dashboard ───────────────────────────
 -- Uma linha por fechamento. Alimentada pelo wizard ao salvar.
 -- Permite queries analíticas sem JOINs complexos.
