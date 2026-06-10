@@ -1,17 +1,19 @@
 @echo off
 setlocal EnableExtensions
-chcp 65001 >nul
 title Araca Grill - Agente CAIXA v7
 
-pushd "%~dp0"
+:: %~dp0 = pasta onde este .bat esta salvo (funciona mesmo rodando como admin)
+set "PASTA=%~dp0"
 
-:: ─── Solicita permissao de Administrador se necessario ─────────────────────
+:: Solicita permissao de Administrador se necessario
 net session >nul 2>&1
 if not "%errorlevel%"=="0" (
     echo Solicitando permissao de Administrador...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process cmd -ArgumentList '/c \"%~f0\"' -Verb RunAs"
     exit /b
 )
+
+cd /d "%PASTA%"
 
 echo ============================================================
 echo   ARACA GRILL - AGENTE CAIXA v7
@@ -19,77 +21,65 @@ echo   Captura de impressora + envio ao Supabase
 echo ============================================================
 echo.
 
-:: ─── Verifica se config_caixa.json existe ──────────────────────────────────
-if not exist "config_caixa.json" (
+:: Verifica se config_caixa.json existe
+if not exist "%PASTA%config_caixa.json" (
     echo CONFIGURACAO NECESSARIA:
     echo.
     echo O arquivo config_caixa.json nao foi encontrado.
     echo.
-    echo 1. Copie o arquivo config.example.json
-    echo 2. Renomeie a copia para config_caixa.json
-    echo 3. Abra com o Bloco de Notas e preencha:
-    echo       printer_name   - nome exato da impressora CAIXA no Windows
-    echo       supabase_url   - URL do projeto Supabase
-    echo       supabase_key   - chave anon do Supabase
-    echo 4. Execute este arquivo novamente
+    echo Voce ja recebeu o config_caixa.json pronto.
+    echo Coloque-o na mesma pasta deste arquivo .bat
     echo.
-    echo Dica: execute LISTAR_IMPRESSORAS.bat para ver os nomes
-    echo       disponiveis no Windows.
+    echo Se precisar ajustar o nome da impressora,
+    echo execute LISTAR_IMPRESSORAS.bat primeiro.
     echo.
     pause
     exit /b 1
 )
 
-:: ─── Localiza Python ────────────────────────────────────────────────────────
-set "PYTHON_EXE="
-where py >nul 2>nul
-if "%errorlevel%"=="0" set "PYTHON_EXE=py -3"
-
-if not defined PYTHON_EXE (
-    where python >nul 2>nul
-    if "%errorlevel%"=="0" set "PYTHON_EXE=python"
+:: Localiza Python
+set "PY="
+where py >nul 2>nul && set "PY=py"
+if not defined PY (
+    where python >nul 2>nul && set "PY=python"
 )
 
-if not defined PYTHON_EXE (
-    echo ERRO: Python nao encontrado neste computador.
+if not defined PY (
+    echo ERRO: Python nao encontrado.
     echo.
-    echo Instale o Python 3 em https://python.org
-    echo Na instalacao marque a opcao: Add Python to PATH
+    echo Instale o Python 3 em: https://python.org
+    echo Na instalacao marque: Add Python to PATH
     echo Depois execute este arquivo novamente.
     echo.
     pause
     exit /b 1
 )
 
-echo Python encontrado: %PYTHON_EXE%
+echo Python encontrado: %PY%
 echo.
 
-:: ─── Instala dependencias ────────────────────────────────────────────────────
-echo Verificando dependencias (pywin32)...
-%PYTHON_EXE% -m pip install pywin32 --quiet --no-warn-script-location
-if not "%errorlevel%"=="0" (
-    echo AVISO: pip retornou erro, mas o agente vai tentar continuar.
-)
+:: Instala pywin32 se necessario
+echo Verificando pywin32...
+%PY% -m pip install pywin32 --quiet --no-warn-script-location
 echo.
 
-:: ─── Inicia o agente ─────────────────────────────────────────────────────────
+:: Inicia o agente
 echo Iniciando agente...
-echo Deixe esta janela ABERTA enquanto o caixa estiver em funcionamento.
-echo Para parar: CTRL+C ou feche esta janela.
+echo Deixe esta janela ABERTA durante o turno.
+echo Para parar: CTRL+C ou feche a janela.
 echo.
 echo ============================================================
 echo.
 
-%PYTHON_EXE% "%CD%\agente.py"
+%PY% "%PASTA%agente.py"
 set "RET=%errorlevel%"
 
 echo.
 echo ============================================================
-if not "%RET%"=="0" (
-    echo Agente encerrado com erro. Codigo: %RET%
-    echo Verifique as mensagens acima.
-) else (
+if "%RET%"=="0" (
     echo Agente encerrado normalmente.
+) else (
+    echo Agente encerrado com erro. Codigo: %RET%
 )
 echo.
 pause
