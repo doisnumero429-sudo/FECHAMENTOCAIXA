@@ -4,7 +4,7 @@ import autoAnimate from '@formkit/auto-animate'
 import { state, loadDefaults, activeForms, activeOps, activeShifts, hydrate } from './state.js'
 import { closePhotoModal, photoModalBackdrop, toast } from './ui.js'
 import { initSupabase, syncFromCloud, loadCloudClosures, loadGerentes } from './supabase.js'
-import { render, next, prev, startNew, finish, confirmDivAbertura, syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI, addCash, removeCash, clearCash, copy, copyAll, toggleDif, addPhoto, associarIncerto, changeSangriaTipo, changeDigitacaoTotvs, autofillExplicacao, autofillCompensacao, enviarAprovacao, limparAprovacao } from './wizard.js'
+import { render, next, prev, startNew, finish, confirmDivAbertura, syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI, addCash, removeCash, clearCash, copy, copyAll, toggleDif, addPhoto, associarIncerto, changeSangriaTipo, changeCancelamentoMotivo, changeCancelamentoClass, changeDigitacaoTotvs, autofillExplicacao, autofillCompensacao, enviarAprovacao, limparAprovacao } from './wizard.js'
 import { renderConfig, updateConfigCounters, updSimple, moveSimple, removeSimple, addOperator, addShift, updForm, updAliases, moveForm, removeForm, addForm, resetForms, toggleConfigSections, copySql, saveConfig, updTolerancia, addTolerancia, removeTolerancia, resetTolerancias, copyGerentesSql, refreshGerentes } from './config.js'
 import { renderClosures, openPhoto, refreshClosures, copyJson } from './history.js'
 import { retryOcr } from './ocr.js'
@@ -28,6 +28,7 @@ window.__wizard = {
   syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI,
   addCash, removeCash, clearCash, copy, copyAll, toggleDif,
   addPhoto, associarIncerto, changeSangriaTipo,
+  changeCancelamentoMotivo, changeCancelamentoClass,
   changeDigitacaoTotvs, autofillExplicacao, autofillCompensacao,
   enviarAprovacao, limparAprovacao
 }

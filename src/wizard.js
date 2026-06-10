@@ -3,7 +3,7 @@ import { money, parseMoney, moneyInput, esc, norm, toast, attachMoneyListeners, 
 import { startPhotoRequest, stopPhotoRequest, handleFallbackUpload, handleManualAdvance, requestAnotherPhoto } from './photo-request.js'
 import { retryOcr, applyJson, applyOcrText } from './ocr.js'
 import { saveLearnedAssociation } from './ai-ocr.js'
-import { uploadPhoto, saveClosure, loadCloudClosures, loadSangriasTurno, loadCancelamentosTurno, confirmSangrias, saveFechamentoResumo, loadNfceTurno, aprovarComGerente } from './supabase.js'
+import { uploadPhoto, saveClosure, loadCloudClosures, loadSangriasTurno, loadCancelamentosTurno, confirmSangrias, saveChangeCancelamentos, saveFechamentoResumo, loadNfceTurno, aprovarComGerente } from './supabase.js'
 import { detectarCompensacoes, narrativaCompensacao, classificarDiff, tolDe, sugerirStatus, STATUS } from './conciliacao.js'
 
 export function render() {
@@ -152,7 +152,9 @@ export async function finish() {
     const snapSangrias = [...state.sangriasTurno]
     const snapCancelamentos = [...state.cancelamentosTurno]
     const snapTipos = { ...state.sangriaTipoChanges }
+    const snapCancelChanges = { ...state.cancelamentoChanges }
     try { if (snapSangrias.length) await confirmSangrias(snapSangrias, snapId, snapTipos) } catch (_) {}
+    try { if (snapCancelamentos.length) await saveChangeCancelamentos(snapCancelamentos, snapCancelChanges) } catch (_) {}
     try { await saveFechamentoResumo(snapCurrent, snapSangrias, snapCancelamentos, snapTipos) } catch (_) {}
 
     await loadCloudClosures()
@@ -526,6 +528,16 @@ export function changeSangriaTipo(id, tipo) {
   state.sangriaTipoChanges[id] = tipo
 }
 
+export function changeCancelamentoMotivo(id, val) {
+  if (!state.cancelamentoChanges[id]) state.cancelamentoChanges[id] = {}
+  state.cancelamentoChanges[id].motivo_editado = val
+}
+
+export function changeCancelamentoClass(id, val) {
+  if (!state.cancelamentoChanges[id]) state.cancelamentoChanges[id] = {}
+  state.cancelamentoChanges[id].classificacao = val
+}
+
 function stepSangria() {
   calc()
 
@@ -591,21 +603,39 @@ function stepSangria() {
          Se houve sangrias, use o campo ao lado.
        </div>`
 
+  const classOpts = [
+    ['', 'Classificar...'],
+    ['indevido', 'Indevido'],
+    ['erro_lancamento', 'Erro de lançamento'],
+    ['qualidade', 'Qualidade'],
+    ['cliente_desistiu', 'Cliente desistiu'],
+    ['outro', 'Outro']
+  ]
   const cancelPanel = cancelamentos.length
     ? `<details style="margin-top:6px">
          <summary style="cursor:pointer;font-weight:800;font-size:13px;padding:8px 0">
            Cancelamentos do turno — ${cancelamentos.length} · ${money(totalCancel)}
          </summary>
-         <div class="table" style="margin-top:10px">
+         <div class="hint" style="margin:6px 0 8px">Edite o motivo ou classifique cada cancelamento para o dashboard.</div>
+         <div class="table" style="margin-top:6px">
            <table>
-             <thead><tr><th>Hora</th><th>Produto</th><th>Motivo</th><th class="num">Valor</th></tr></thead>
+             <thead><tr><th>Hora</th><th>Produto</th><th class="num">Valor</th><th>Motivo</th><th>Classificação</th></tr></thead>
              <tbody>${cancelamentos.map(c => {
                const hora = c.data_hora ? c.data_hora.slice(11, 16) : '—'
+               const ch = state.cancelamentoChanges[c.id] || {}
+               const motivoVal = ch.motivo_editado !== undefined ? ch.motivo_editado : (c.motivo_editado || '')
+               const classVal = ch.classificacao !== undefined ? ch.classificacao : (c.classificacao || '')
+               const classOptHtml = classOpts.map(([v, l]) =>
+                 `<option value="${v}"${classVal === v ? ' selected' : ''}>${esc(l)}</option>`).join('')
                return `<tr>
                  <td>${esc(hora)}</td>
                  <td>${esc(c.produto || '—')}</td>
-                 <td>${esc(c.motivo || '—')}</td>
                  <td class="num">${money(c.valor)}</td>
+                 <td><input type="text" value="${esc(motivoVal)}" placeholder="${esc(c.motivo || 'Motivo...')}"
+                   style="font-size:12px;border-radius:8px;padding:4px 8px;border:1px solid #d1d5db;width:100%;min-width:120px"
+                   oninput="window.__wizard.changeCancelamentoMotivo('${c.id}',this.value)"></td>
+                 <td><select style="font-size:12px;border-radius:8px;padding:4px 8px;border:1px solid #d1d5db"
+                   onchange="window.__wizard.changeCancelamentoClass('${c.id}',this.value)">${classOptHtml}</select></td>
                </tr>`
              }).join('')}</tbody>
            </table>

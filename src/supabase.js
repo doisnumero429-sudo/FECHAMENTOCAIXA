@@ -250,6 +250,19 @@ export async function confirmSangrias(sangrias, fechamentoId, tipoChanges = {}) 
   }
 }
 
+export async function saveChangeCancelamentos(cancelamentos, changes) {
+  if (!state.sb || !cancelamentos.length) return
+  const toUpdate = cancelamentos.filter(c => changes[c.id])
+  for (const c of toUpdate) {
+    const ch = changes[c.id]
+    const upd = {}
+    if (ch.motivo_editado !== undefined) upd.motivo_editado = ch.motivo_editado || null
+    if (ch.classificacao !== undefined) upd.classificacao = ch.classificacao || null
+    if (Object.keys(upd).length)
+      await state.sb.from('caixa_cancelamentos').update(upd).eq('id', c.id)
+  }
+}
+
 export async function saveFechamentoResumo(current, sangriasTurno, cancelamentosTurno, tipoChanges = {}) {  if (!state.sb) return
   const effective = (s) => tipoChanges[s.id] || s.tipo || 'outro'
   const byTipo = (t) => sangriasTurno

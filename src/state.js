@@ -50,6 +50,7 @@ export const state = {
   sangriasTurnoLoading: false,
   cancelamentosTurno: [],
   sangriaTipoChanges: {},
+  cancelamentoChanges: {},
   nfceTurno: [],
   nfceTurnoLoaded: false,
   nfceTurnoLoading: false
@@ -119,6 +120,7 @@ export function newClosure() {
   state.sangriasTurnoLoading = false
   state.cancelamentosTurno = []
   state.sangriaTipoChanges = {}
+  state.cancelamentoChanges = {}
   state.nfceTurno = []
   state.nfceTurnoLoaded = false
   state.nfceTurnoLoading = false

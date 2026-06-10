@@ -325,7 +325,9 @@ do $$ begin create policy sangrias_delete on public.caixa_sangrias for delete us
 
 do $$ begin create policy cancel_select on public.caixa_cancelamentos for select using (true); exception when duplicate_object then null; end $$;
 do $$ begin create policy cancel_insert on public.caixa_cancelamentos for insert with check (true); exception when duplicate_object then null; end $$;
-do $$ begin create policy cancel_update on public.caixa_cancelamentos for update using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
+-- UPDATE aberto para anon: operador pode editar motivo e classificação no wizard
+drop policy if exists cancel_update on public.caixa_cancelamentos;
+create policy cancel_update on public.caixa_cancelamentos for update using (true);
 do $$ begin create policy cancel_delete on public.caixa_cancelamentos for delete using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
 
 -- ─── Colunas de linkage ao fechamento (v3) ──────────────────────────────────
@@ -333,6 +335,10 @@ do $$ begin create policy cancel_delete on public.caixa_cancelamentos for delete
 
 alter table public.caixa_sangrias add column if not exists fechamento_id text;
 alter table public.caixa_cancelamentos add column if not exists fechamento_id text;
+
+-- ─── Cancelamentos: campos editáveis pelo operador (v4) ──────────────────────
+alter table public.caixa_cancelamentos add column if not exists motivo_editado text;
+alter table public.caixa_cancelamentos add column if not exists classificacao text;
 
 -- ─── Resumo de fechamento — base para o dashboard ───────────────────────────
 -- Uma linha por fechamento. Alimentada pelo wizard ao salvar.
