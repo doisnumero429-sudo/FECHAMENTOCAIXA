@@ -361,9 +361,14 @@ def _classify_sangria_tipo(motivo: str) -> str:
     """
     vale   = adiantamento de salário para funcionário fixo (prefixo VALE)
     extra  = freelancer ou funcionário em sua folga trabalhando (prefixo EXTRA, sem música)
+             "EXTRA FOLGA" = folguista sendo pago para trabalhar
     musico = músico/banda contratado (EXTRA + palavra de música, ou MUSICO/BANDA)
     cofre  = retirada pelo dono (prefixo COFRE / RETIRADA COFRE)
     outro  = não classificado automaticamente
+
+    Sufixos comuns no motivo (não alteram o tipo):
+      TN = Turno Noite  |  TD = Turno Dia
+      Ex: "EXTRA ÂNGELO MÚSICA TN", "VALE FABIANA TN", "EXTRA RENATO TD"
     """
     folded = _ascii_fold(motivo)
     raw = motivo.upper()
