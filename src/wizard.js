@@ -3,11 +3,36 @@ import { money, parseMoney, moneyInput, esc, norm, toast, attachMoneyListeners, 
 import { startPhotoRequest, stopPhotoRequest, handleFallbackUpload, handleManualAdvance, requestAnotherPhoto } from './photo-request.js'
 import { retryOcr, applyJson, applyOcrText } from './ocr.js'
 import { saveLearnedAssociation } from './ai-ocr.js'
-import { uploadPhoto, saveClosure, loadCloudClosures, loadSangriasTurno, loadCancelamentosTurno, confirmSangrias, saveChangeCancelamentos, saveFechamentoResumo, loadNfceTurno, aprovarComGerente } from './supabase.js'
+import { uploadPhoto, saveClosure, loadCloudClosures, loadSangriasTurno, loadCancelamentosTurno, confirmSangrias, saveChangeCancelamentos, saveFechamentoResumo, loadNfceTurno, aprovarComGerente, loadFitaRecente } from './supabase.js'
 import { detectarCompensacoes, narrativaCompensacao, classificarDiff, tolDe, sugerirStatus, STATUS } from './conciliacao.js'
+
+function stopFitaPolling() {
+  if (state.fitaPollInterval) { clearInterval(state.fitaPollInterval); state.fitaPollInterval = null }
+}
+
+function startFitaPolling() {
+  if (state.fitaPollInterval) return
+  state.fitaPollInterval = setInterval(async () => {
+    if (state.step !== 7) { stopFitaPolling(); return }
+    if (state.current.fitaStatus !== 'aguardando') { stopFitaPolling(); return }
+    try {
+      const fita = await loadFitaRecente(state.current.data, state.current.fitaT0 || undefined)
+      if (fita) {
+        state.current.fitaFechamento = fita
+        state.current.fitaStatus = 'recebida'
+        stopFitaPolling()
+        render()
+      }
+    } catch (_) {}
+  }, 3000)
+}
 
 export function render() {
   hydrate()
+  if (state.step !== 7) stopFitaPolling()
+  if (state.step === 7 && state.current.fitaStatus === 'aguardando' && !state.fitaPollInterval) {
+    startFitaPolling()
+  }
   renderSteps()
   document.getElementById('stepTitle').textContent = STEPS[state.step - 1][0]
   document.getElementById('stepHelp').textContent = STEPS[state.step - 1][1]
@@ -65,6 +90,7 @@ export function prev() {
 export function startNew() {
   if (confirm('Criar novo fechamento? O rascunho atual não será salvo.')) {
     stopPhotoRequest()
+    stopFitaPolling()
     state.step = 1
     newClosure()
     render()
@@ -109,12 +135,24 @@ function validate(s) {
     calc()
   }
   if (s === 7) {
-    state.current.houveDiferenca = document.querySelector('input[name=dif]:checked')?.value === 'sim'
-    state.current.obsDiferenca = document.getElementById('obsDif')?.value.trim() || ''
-    calc()
-    state.current.trocoFinal = state.current.dinheiroContado
-    if (state.current.houveDiferenca && !state.current.obsDiferenca)
-      return toast('Explique a diferença.'), false
+    const fitaAvailable = state.current.fitaStatus === 'recebida' && state.current.fitaFechamento
+    if (fitaAvailable) {
+      const tol = tolDe('_geral')
+      const diffTotal = Number(state.current.fitaFechamento.diferenca_total || 0)
+      state.current.houveDiferenca = Math.abs(diffTotal) > tol
+      state.current.obsDiferenca = document.getElementById('obsDif')?.value.trim() || ''
+      calc()
+      state.current.trocoFinal = state.current.dinheiroContado
+      if (state.current.houveDiferenca && !state.current.obsDiferenca)
+        return toast('Explique a diferença no campo correspondente.'), false
+    } else {
+      state.current.houveDiferenca = document.querySelector('input[name=dif]:checked')?.value === 'sim'
+      state.current.obsDiferenca = document.getElementById('obsDif')?.value.trim() || ''
+      calc()
+      state.current.trocoFinal = state.current.dinheiroContado
+      if (state.current.houveDiferenca && !state.current.obsDiferenca)
+        return toast('Explique a diferença.'), false
+    }
     finalizarStatusConciliacao()
     buildAlerts()
   }
@@ -162,6 +200,7 @@ export async function finish() {
     renderClosures && renderClosures()
     state.photoFile = null
     stopPhotoRequest()
+    stopFitaPolling()
     newClosure()
     state.step = 1
     render()
@@ -698,6 +737,20 @@ function stepTotvs() {
     <div class="btns" style="margin-top:14px">
       <button class="btn secondary" onclick="window.__wizard.copyAll()"><i data-lucide="clipboard-list"></i> Copiar resumo</button>
     </div>
+    <div style="margin-top:22px;padding:16px 18px;background:#f0fdf4;border-radius:14px;border:1px solid #bbf7d0">
+      <div style="font-weight:900;margin-bottom:6px">Após preencher, encerre o caixa no TOTVS</div>
+      <div style="color:#374151;font-size:13px;margin-bottom:14px;line-height:1.5">
+        Pressione <b>F10</b> e aguarde a fita de fechamento imprimir.<br>
+        Depois clique abaixo — o sistema busca os dados automaticamente.
+      </div>
+      ${state.current.fitaStatus === 'recebida'
+        ? `<div class="alert ok">Fita já recebida. Continue para ver o resultado.</div>`
+        : `<button class="btn success" onclick="window.__wizard.iniciarBuscaFita()">
+             <i data-lucide="search"></i> Já encerrei — buscar fita
+           </button>`
+      }
+      <div class="hint" style="margin-top:8px">Sem este botão, a conciliação usará os cupons NFC-e capturados pelo agente (estimativa).</div>
+    </div>
     ${footer()}`
 }
 
@@ -873,8 +926,39 @@ function _buildAprovacao(autoOpen) {
 
 function stepResult() {
   calc()
+  const fitaStatus = state.current.fitaStatus || 'nenhuma'
 
-  // Carrega NFC-e na primeira entrada na etapa
+  // ── Estado 1: aguardando fita ──────────────────────────────────────────────
+  if (fitaStatus === 'aguardando') {
+    return `
+      <div style="text-align:center;padding:32px 0">
+        <div style="display:inline-flex;align-items:center;gap:12px;margin-bottom:16px">
+          <div class="photo-request-spinner" style="border-top-color:#2563eb"></div>
+          <span style="font-size:17px;font-weight:900">Aguardando fita de fechamento...</span>
+        </div>
+        <div style="color:#6b7280;font-size:13px;margin-bottom:24px;line-height:1.6">
+          O agente Windows capturará a fita assim que ela sair da impressora.<br>
+          Verifique se o agente está rodando no computador do restaurante.
+        </div>
+        <button class="btn light" onclick="window.__wizard.skipFita()">
+          Continuar sem a fita (usar estimativa NFC-e)
+        </button>
+      </div>
+      ${footer()}`
+  }
+
+  // ── Estado 2: fita recebida ────────────────────────────────────────────────
+  if (fitaStatus === 'recebida' && state.current.fitaFechamento) {
+    return _stepResultFita() + footer()
+  }
+
+  // ── Estado 3: fallback ou sem fita → conciliação NFC-e (comportamento atual) ─
+  const fallbackWarning = fitaStatus === 'fallback'
+    ? `<div class="alert warn" style="margin-bottom:14px">
+         <b>Fita não recebida</b> — usando estimativa baseada nos NFC-e capturados.
+       </div>`
+    : ''
+
   if (!state.nfceTurnoLoaded && !state.nfceTurnoLoading && state.current.data) {
     state.nfceTurnoLoading = true
     loadNfceTurno(state.current.data).then(rows => {
@@ -887,7 +971,6 @@ function stepResult() {
     return `<div class="alert blue"><b>Calculando conciliação do turno...</b></div>${footer()}`
   }
 
-  // Agrega NFC-e por forma de pagamento
   const agg = {}
   for (const ev of state.nfceTurno) {
     const k = ev.forma_pagamento || 'outros'
@@ -896,14 +979,11 @@ function stepResult() {
   const nfceTotal = Object.values(agg).reduce((s, v) => s + v, 0)
   const nfceCount = state.nfceTurno.length
 
-  // Valores informados no wizard (maquininha + dinheiro)
   const wizPays = state.current.pagamentos.filter(p => Number(p.confirmedValue || 0) > 0)
   const wizMaqTotal = wizPays.reduce((s, p) => s + Number(p.confirmedValue || 0), 0)
   const wizTotal = wizMaqTotal + Number(state.current.dinheiroTotvs || 0)
   const totalDiff = nfceTotal - wizTotal
 
-  // Comparação por forma — 4 formas que têm correspondência direta no NFC-e do agente.
-  // Dinheiro entra como comparação real: NFC-e em dinheiro × valor calculado para o TOTVS.
   const formas = [
     { id: 'credito',  label: 'Crédito'  },
     { id: 'debito',   label: 'Débito'   },
@@ -918,18 +998,16 @@ function stepResult() {
     return { id, label, wizVal, agentVal, diff: agentVal - wizVal }
   })
 
-  // Total comparável = só das formas presentes na tabela (evita ruído de voucher/assinadas/iFood).
   const agentComp = comp.reduce((s, c) => s + c.agentVal, 0)
   const wizComp = comp.reduce((s, c) => s + c.wizVal, 0)
   const diffComp = agentComp - wizComp
 
-  // Motor de compensação + insights
   const compensacoes = detectarCompensacoes(comp.map(c => ({ id: c.id, label: c.label, diff: c.diff })))
   const insights = _gerarInsights(comp, diffComp, nfceTotal, nfceCount, compensacoes)
   const statusSugerido = sugerirStatus({ totalDiff: diffComp, comp, compensacoes })
 
-  // Guarda a análise no fechamento (persiste no payload e alimenta o status final)
   state.current.conciliacao = {
+    fonte: 'nfce',
     nfceTotal, nfceCount, diffComparavel: diffComp, totalDiff,
     comp: comp.map(c => ({ id: c.id, label: c.label, wizVal: c.wizVal, agentVal: c.agentVal, diff: c.diff })),
     compensacoes: compensacoes.map(p => ({
@@ -939,8 +1017,7 @@ function stepResult() {
     statusSugerido
   }
 
-  // Cor da diferença ciente da tolerância configurada por forma
-  const diffHtml = (d, id) => {
+  const diffHtmlNfce = (d, id) => {
     const cls = classificarDiff(d, id)
     if (cls === 'zero') return `<span style="color:#16a34a;font-weight:800">✓</span>`
     if (cls === 'tolerada')
@@ -973,14 +1050,14 @@ function stepResult() {
               <td ${c.id === 'dinheiro' ? 'style="color:#1e40af;font-weight:800"' : ''}>${esc(c.label)}</td>
               <td class="num">${money(c.agentVal)}</td>
               <td class="num">${money(c.wizVal)}</td>
-              <td class="num">${diffHtml(c.diff, c.id)}</td>
+              <td class="num">${diffHtmlNfce(c.diff, c.id)}</td>
             </tr>`).join('')}
           </tbody>
           <tfoot><tr style="background:var(--soft)">
             <td><b>Total comparável</b></td>
             <td class="num"><b>${money(agentComp)}</b></td>
             <td class="num"><b>${money(wizComp)}</b></td>
-            <td class="num"><b>${diffHtml(diffComp, '_geral')}</b></td>
+            <td class="num"><b>${diffHtmlNfce(diffComp, '_geral')}</b></td>
           </tr></tfoot>
         </table>
       </div>
@@ -1004,7 +1081,7 @@ function stepResult() {
 
   return `
     <div class="grid g2">
-      <div>${conciliacaoPanel}${_buildDiagDigitacao()}</div>
+      <div>${fallbackWarning}${conciliacaoPanel}${_buildDiagDigitacao()}</div>
       <div>
         <div class="summary" style="margin-bottom:16px">
           <small>Troco final deixado para o próximo caixa</small>
@@ -1030,6 +1107,137 @@ function stepResult() {
       </div>
     </div>
     ${footer()}`
+}
+
+// ── Etapa 7 com fita TOTVS ────────────────────────────────────────────────────
+
+function _stepResultFita() {
+  const fita = state.current.fitaFechamento
+  const tol = tolDe('_geral')
+  const diffTotal = Number(fita.diferenca_total || 0)
+  const bateu = Math.abs(diffTotal) <= tol
+
+  // Linhas da conciliação: usa o JSONB se disponível, senão constrói das colunas escalares
+  const linhas = Array.isArray(fita.conciliacao) && fita.conciliacao.length > 0
+    ? fita.conciliacao.map(l => ({
+        forma: l.forma || l.label || '—',
+        bordero: Number(l.bordero ?? l.caixa ?? 0),
+        caixa: Number(l.caixa ?? l.bordero ?? 0),
+        diff: Number(l.diff ?? ((l.caixa ?? 0) - (l.bordero ?? 0)))
+      }))
+    : [
+        { forma: 'Crédito',  bordero: Number(fita.bordero_credito || 0),  caixa: Number(fita.entradas_credito || 0),  diff: Number(fita.entradas_credito || 0)  - Number(fita.bordero_credito || 0)  },
+        { forma: 'Débito',   bordero: Number(fita.bordero_debito || 0),   caixa: Number(fita.entradas_debito || 0),   diff: Number(fita.entradas_debito || 0)   - Number(fita.bordero_debito || 0)   },
+        { forma: 'Dinheiro', bordero: Number(fita.bordero_dinheiro || 0), caixa: Number(fita.entradas_dinheiro || 0), diff: Number(fita.entradas_dinheiro || 0) - Number(fita.bordero_dinheiro || 0) },
+        { forma: 'PIX',      bordero: Number(fita.bordero_pix || 0),      caixa: Number(fita.entradas_pix || 0),      diff: Number(fita.entradas_pix || 0)      - Number(fita.bordero_pix || 0)      },
+      ]
+
+  // Motor de compensação nas linhas da fita
+  const fitaDiffs = linhas.map(l => ({
+    id: l.forma.toLowerCase().replace(/[^a-z]/g, '_'),
+    label: l.forma,
+    diff: l.diff
+  }))
+  const compensacoes = detectarCompensacoes(fitaDiffs)
+
+  const statusSugerido = bateu
+    ? (Math.abs(diffTotal) < 0.005 ? 'sem_diferenca' : 'tolerada')
+    : compensacoes.length ? 'troca_modalidade' : 'pendente'
+
+  state.current.conciliacao = {
+    fonte: 'fita',
+    fitaId: fita.id,
+    diferenca_total: diffTotal,
+    linhas,
+    compensacoes: compensacoes.map(p => ({
+      posId: p.pos.id, posLabel: p.pos.label, negId: p.neg.id, negLabel: p.neg.label,
+      valor: p.valor, residuo: p.residuo, confianca: p.confianca
+    })),
+    statusSugerido
+  }
+
+  const diffHtmlFita = (d) => {
+    if (Math.abs(d) < 0.005) return `<span style="color:#16a34a;font-weight:800">✓</span>`
+    const color = Math.abs(d) < 20 ? '#d97706' : '#dc2626'
+    return `<span style="color:${color};font-weight:800">${d > 0 ? '+' : ''}${money(d)}</span>`
+  }
+
+  const statusChip = `<span style="font-size:12px;font-weight:800;padding:5px 12px;border-radius:999px;color:${bateu ? '#065f46' : '#991b1b'};background:${bateu ? '#d1fae5' : '#fee2e2'}">${bateu ? 'Caixa fechou ✓' : 'Diferença detectada'}</span>`
+
+  const tabelaHtml = `
+    <div class="table"><table>
+      <thead><tr>
+        <th>Forma</th><th class="num">Borderô</th><th class="num">Caixa (TOTVS)</th><th class="num">Diferença</th>
+      </tr></thead>
+      <tbody>
+        ${linhas.map(l => `<tr>
+          <td>${esc(l.forma)}</td>
+          <td class="num">${money(l.bordero)}</td>
+          <td class="num">${money(l.caixa)}</td>
+          <td class="num">${diffHtmlFita(l.diff)}</td>
+        </tr>`).join('')}
+      </tbody>
+      <tfoot><tr style="background:var(--soft)">
+        <td><b>Diferença total</b></td>
+        <td class="num" colspan="2"></td>
+        <td class="num"><b style="color:${bateu ? '#16a34a' : '#dc2626'}">${diffTotal > 0 ? '+' : ''}${money(diffTotal)}</b></td>
+      </tr></tfoot>
+    </table></div>`
+
+  const insightsFita = compensacoes.map((p, idx) => {
+    const n = narrativaCompensacao(p)
+    return `<div class="alert warn" style="margin-top:8px">
+      <b>${n.emoji} ${esc(n.titulo)}</b><br>
+      <span style="font-size:13px;line-height:1.5">${n.texto}</span>
+      <div style="margin-top:10px">
+        <button class="btn secondary small" onclick="window.__wizard.autofillCompensacao(${idx})">
+          <i data-lucide="clipboard-list"></i> Usar como explicação
+        </button>
+      </div>
+    </div>`
+  }).join('')
+
+  const statusGeral = bateu && !compensacoes.length
+    ? `<div class="alert ok" style="margin-top:8px">
+         <b>✅ Valores conferem — dentro da tolerância configurada (${money(tol)})</b>
+       </div>`
+    : !bateu && !compensacoes.length
+      ? `<div class="alert bad" style="margin-top:8px">
+           <b>Diferença de ${money(Math.abs(diffTotal))} acima da tolerância de ${money(tol)}</b><br>
+           <span style="font-size:13px">Descreva a diferença no campo ao lado.</span>
+         </div>`
+      : ''
+
+  const leftPanel = `
+    <div style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <b>Conciliação da fita TOTVS</b>${statusChip}
+      </div>
+      ${tabelaHtml}${insightsFita}${statusGeral}
+    </div>
+    ${_buildDiagDigitacao()}`
+
+  const rightPanel = `
+    <div class="summary" style="margin-bottom:16px">
+      <small>Troco final deixado para o próximo caixa</small>
+      <strong>${money(state.current.dinheiroContado)}</strong>
+    </div>
+    <div class="payment">
+      <div style="font-weight:900;margin-bottom:8px">Resultado da fita</div>
+      <div style="font-size:26px;font-weight:1000;color:${bateu ? '#16a34a' : '#dc2626'};letter-spacing:-.5px">
+        ${diffTotal === 0 ? 'R$&nbsp;0,00' : (diffTotal > 0 ? '+' : '') + money(diffTotal)}
+      </div>
+      <div style="font-size:12px;color:#6b7280;margin-top:2px">Diferença total · tolerância: ${money(tol)}</div>
+      ${!bateu ? `
+        <div class="field" style="margin-top:14px">
+          <label>Explique a diferença <span style="color:#6b7280;font-weight:400">(obrigatório)</span></label>
+          <textarea id="obsDif" rows="5"
+            placeholder="Descreva o que apareceu na fita, o que foi verificado e a conclusão.">${esc(state.current.obsDiferenca || '')}</textarea>
+        </div>` : ''}
+    </div>
+    ${_buildAprovacao(!bateu || statusSugerido === 'pendente')}`
+
+  return `<div class="grid g2"><div>${leftPanel}</div><div>${rightPanel}</div></div>`
 }
 
 export function toggleDif() {
@@ -1136,12 +1344,39 @@ export function limparAprovacao() {
   render()
 }
 
+export function iniciarBuscaFita() {
+  state.current.fitaT0 = new Date().toISOString()
+  state.current.fitaStatus = 'aguardando'
+  state.step = 7
+  render()
+}
+
+export function skipFita() {
+  stopFitaPolling()
+  state.current.fitaStatus = 'fallback'
+  render()
+}
+
 // Define o status final da conciliação a partir da sugestão automática + ação do operador.
 function finalizarStatusConciliacao() {
   const c = state.current
-  // Aprovação do gerente tem precedência sobre o status automático.
   if (c.aprovacao?.decisao === 'aprovar') { c.conciliacaoStatus = 'aprovada'; return }
   if (c.aprovacao?.decisao === 'recusar') { c.conciliacaoStatus = 'recusada'; return }
+
+  // Quando a fita foi recebida, usamos os dados reais do TOTVS.
+  if (c.fitaStatus === 'recebida' && c.fitaFechamento) {
+    const tol = tolDe('_geral')
+    const diffAbs = Math.abs(Number(c.fitaFechamento.diferenca_total || 0))
+    if (diffAbs < 0.005) { c.conciliacaoStatus = 'sem_diferenca'; return }
+    if (diffAbs <= tol) { c.conciliacaoStatus = 'tolerada'; return }
+    const comps = c.conciliacao?.compensacoes || []
+    if (comps.length) { c.conciliacaoStatus = 'troca_modalidade'; return }
+    if (c.obsDiferenca) { c.conciliacaoStatus = 'justificada'; return }
+    c.conciliacaoStatus = 'pendente'
+    return
+  }
+
+  // Fallback: status baseado em NFC-e / resposta manual do operador.
   const sugerido = c.conciliacao?.statusSugerido || 'sem_diferenca'
   const dig = c.digitacaoTotvs || {}
   const usouDigitacao = (c.obsDiferenca || '').startsWith('Erro de digitação')
@@ -1149,12 +1384,10 @@ function finalizarStatusConciliacao() {
 
   let status
   if (c.houveDiferenca) {
-    // Operador confirmou diferença na fita (a justificativa é obrigatória aqui).
     if (usouDigitacao) status = 'digitacao'
     else if (sugerido === 'troca_modalidade') status = 'troca_modalidade'
     else status = 'justificada'
   } else {
-    // Sem diferença confirmada: mantém apenas sugestões benignas.
     status = sugerido === 'troca_modalidade' ? 'troca_modalidade'
       : sugerido === 'tolerada' ? 'tolerada'
       : 'sem_diferenca'

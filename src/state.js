@@ -45,6 +45,8 @@ export const state = {
   photoFile: null,
   photoPollInterval: null,
   currentPedidoId: null,
+  fitaPollInterval: null,
+  fitaT0: null,
   sangriasTurno: [],
   sangriasTurnoLoaded: false,
   sangriasTurnoLoading: false,
@@ -113,6 +115,9 @@ export function newClosure() {
     alertas: [],
     fotos: [],
     ocrIncerto: [],
+    fitaFechamento: null,
+    fitaStatus: 'nenhuma',
+    fitaT0: null,
     criado_em: new Date().toISOString()
   }
   state.sangriasTurno = []
@@ -124,6 +129,8 @@ export function newClosure() {
   state.nfceTurno = []
   state.nfceTurnoLoaded = false
   state.nfceTurnoLoading = false
+  state.fitaPollInterval = null
+  state.fitaT0 = null
   hydrate()
   updateDraftBadge()
   return state.current

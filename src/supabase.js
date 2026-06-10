@@ -420,6 +420,20 @@ export async function removerGerente(id) {
   } catch (e) { return { ok: false, erro: e.message } }
 }
 
+export async function loadFitaRecente(dataTurno, desdeISO) {
+  if (!state.sb || !dataTurno) return null
+  let q = state.sb
+    .from('caixa_fechamento_fita')
+    .select('id,data_turno,diferenca_total,conciliacao,created_at,bordero_credito,bordero_debito,bordero_dinheiro,bordero_pix,entradas_credito,entradas_debito,entradas_dinheiro,entradas_pix')
+    .eq('data_turno', dataTurno)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (desdeISO) q = q.gt('created_at', desdeISO)
+  const { data, error } = await q
+  if (error || !data?.length) return null
+  return data[0]
+}
+
 export async function loadAprovacoes(fechamentoIds) {
   if (!state.sb || !fechamentoIds?.length) return {}
   try {
