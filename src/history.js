@@ -106,6 +106,7 @@ function buildCard(c, prevTrocoFinal) {
     .sort((a, b) => (a.ordem || 999) - (b.ordem || 999))
 
   const totalMaq = pagamentos.reduce((s, p) => s + Number(p.confirmedValue || 0), 0)
+  const totalGeral = totalMaq + Number(c.dinheiroTotvs || 0)
 
   const payRows = pagamentos.map(p => {
     const editado = p.edited
@@ -207,8 +208,8 @@ function buildCard(c, prevTrocoFinal) {
           <strong style="color:#1e40af">${money(c.dinheiroTotvs)}</strong>
         </div>
         <div class="summary" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe);border-color:#ddd6fe">
-          <small style="color:#5b21b6">Total maquininha</small>
-          <strong style="color:#5b21b6">${money(totalMaq)}</strong>
+          <small style="color:#5b21b6">Total geral</small>
+          <strong style="color:#5b21b6">${money(totalGeral)}</strong>
         </div>
       </div>
 
@@ -244,21 +245,28 @@ function buildCard(c, prevTrocoFinal) {
 
           <!-- Formas de pagamento -->
           <div>
-            <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:10px">Formas de pagamento (maquininha)</div>
+            <div style="font-size:11px;font-weight:1000;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;margin-bottom:10px">Formas de pagamento</div>
             <div class="table">
               <table>
                 <thead>
                   <tr>
                     <th>Forma</th>
-                    <th class="num">Valor confirmado</th>
+                    <th class="num">Valor</th>
                     <th>Status</th>
                   </tr>
                 </thead>
-                <tbody>${payRows}</tbody>
+                <tbody>
+                  ${payRows}
+                  <tr style="background:linear-gradient(135deg,#eff6ff,#dbeafe)">
+                    <td style="font-weight:800;color:#1e40af">Dinheiro</td>
+                    <td class="num" style="color:#1e40af;font-weight:800">${money(c.dinheiroTotvs)}</td>
+                    <td><span style="color:#1e40af;font-size:11px">Lançado no TOTVS</span></td>
+                  </tr>
+                </tbody>
                 <tfoot>
                   <tr style="background:var(--soft)">
-                    <td><b>Total maquininha</b></td>
-                    <td class="num"><b>${money(totalMaq)}</b></td>
+                    <td><b>Total geral</b></td>
+                    <td class="num"><b>${money(totalGeral)}</b></td>
                     <td></td>
                   </tr>
                 </tfoot>
