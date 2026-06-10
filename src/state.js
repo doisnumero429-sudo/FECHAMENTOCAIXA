@@ -94,6 +94,7 @@ export function newClosure() {
     trocoFinal: 0,
     houveDiferenca: false,
     obsDiferenca: '',
+    digitacaoTotvs: {},
     alertas: [],
     fotos: [],
     ocrIncerto: [],
