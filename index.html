@@ -10,6 +10,9 @@
   <meta name="apple-mobile-web-app-title" content="Caixa AG" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
   <title>Fechamento de Caixa — Araçá Grill</title>
   <script type="module" src="/src/main.js"></script>
 </head>
@@ -23,11 +26,11 @@
           <p>Araçá Grill</p>
         </div>
       </div>
-      <div class="nav">
-        <button class="active" data-page="fechamento">Fechamento guiado</button>
-        <button data-page="consulta">Conferência</button>
-        <button data-page="config">Configurações</button>
-      </div>
+      <nav class="nav">
+        <button class="active" data-page="fechamento"><i data-lucide="layout-dashboard"></i><span>Fechamento guiado</span></button>
+        <button data-page="consulta"><i data-lucide="search"></i><span>Conferência</span></button>
+        <button data-page="config"><i data-lucide="settings-2"></i><span>Configurações</span></button>
+      </nav>
     </aside>
 
     <main>
@@ -63,8 +66,8 @@
               <small>Histórico, alertas e divergências.</small>
             </div>
             <div class="btns">
-              <button class="btn light" id="btnRefreshCloud">Atualizar da nuvem</button>
-              <button class="btn secondary" id="btnCopyJson">Copiar JSON</button>
+              <button class="btn light" id="btnRefreshCloud"><i data-lucide="refresh-cw"></i> Atualizar</button>
+              <button class="btn secondary" id="btnCopyJson"><i data-lucide="copy"></i> Exportar</button>
             </div>
           </div>
           <div class="body">
@@ -101,9 +104,9 @@
               <small>Clique em uma seção para abrir, editar e organizar.</small>
             </div>
             <div class="btns">
-              <button class="btn light" id="btnOpenAll">Abrir tudo</button>
-              <button class="btn light" id="btnCloseAll">Fechar tudo</button>
-              <button class="btn primary" id="btnSaveConfig">Salvar configurações</button>
+              <button class="btn light" id="btnOpenAll"><i data-lucide="chevrons-down"></i> Abrir tudo</button>
+              <button class="btn light" id="btnCloseAll"><i data-lucide="chevrons-up"></i> Fechar tudo</button>
+              <button class="btn primary" id="btnSaveConfig"><i data-lucide="save"></i> Salvar</button>
             </div>
           </div>
 

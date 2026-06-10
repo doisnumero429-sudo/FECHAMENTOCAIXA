@@ -1,12 +1,23 @@
 import './style.css'
+import { createIcons, LayoutDashboard, Search, Settings2, RefreshCw, Copy, ChevronsDown, ChevronsUp, Save, ArrowLeft, ArrowRight, Plus, CheckCircle, Check, Trash2, X, RotateCw, Camera, ClipboardList, Image, ExternalLink, AlertTriangle, Info, ChevronRight, ChevronDown } from 'lucide'
+import autoAnimate from '@formkit/auto-animate'
 import { state, loadDefaults, activeForms, activeOps, activeShifts, hydrate } from './state.js'
 import { closePhotoModal, photoModalBackdrop, toast } from './ui.js'
 import { initSupabase, syncFromCloud, loadCloudClosures } from './supabase.js'
-import { render, next, prev, startNew, finish, confirmDivAbertura, syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI, addCash, removeCash, clearCash, copy, copyAll, toggleDif } from './wizard.js'
+import { render, next, prev, startNew, finish, confirmDivAbertura, syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI, addCash, removeCash, clearCash, copy, copyAll, toggleDif, addPhoto, associarIncerto } from './wizard.js'
 import { renderConfig, updateConfigCounters, updSimple, moveSimple, removeSimple, addOperator, addShift, updForm, updAliases, moveForm, removeForm, addForm, resetForms, toggleConfigSections, copySql, saveConfig } from './config.js'
 import { renderClosures, openPhoto, refreshClosures, copyJson } from './history.js'
 import { retryOcr } from './ocr.js'
 import { handleManualAdvance, handleFallbackUpload } from './photo-request.js'
+
+const ICONS = {
+  LayoutDashboard, Search, Settings2, RefreshCw, Copy, ChevronsDown, ChevronsUp, Save,
+  ArrowLeft, ArrowRight, Plus, CheckCircle, Check, Trash2, X, RotateCw, Camera,
+  ClipboardList, Image, ExternalLink, AlertTriangle, Info, ChevronRight, ChevronDown
+}
+
+function refreshIcons() { createIcons({ icons: ICONS }) }
+window.__refreshIcons = refreshIcons
 
 // Expor closePhotoModal globalmente (usado no botão X do modal no HTML estático)
 window.__ui = { closePhotoModal }
@@ -15,12 +26,13 @@ window.__ui = { closePhotoModal }
 window.__wizard = {
   next, prev, startNew, finish, confirmDivAbertura,
   syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI,
-  addCash, removeCash, clearCash, copy, copyAll, toggleDif
+  addCash, removeCash, clearCash, copy, copyAll, toggleDif,
+  addPhoto, associarIncerto
 }
 window.__config = {
   updSimple, moveSimple, removeSimple, addOperator, addShift,
   updForm, updAliases, moveForm, removeForm, addForm, resetForms,
-  toggleConfigSections, copySql
+  toggleConfigSections, copySql, saveConfig
 }
 window.__history = { renderClosures, openPhoto, refreshClosures, copyJson }
 window.__ocr = { retryOcr }
@@ -50,6 +62,7 @@ function showPage(id) {
   document.getElementById('subtitle').textContent = subtitle
   if (id === 'config') renderConfig()
   if (id === 'consulta') renderClosures()
+  requestAnimationFrame(refreshIcons)
 }
 
 // Handlers de navegação
@@ -79,6 +92,8 @@ async function boot() {
   render()
   renderConfig()
   renderClosures()
+  requestAnimationFrame(refreshIcons)
+  autoAnimate(document.getElementById('closures') || document.body)
 }
 
 boot()

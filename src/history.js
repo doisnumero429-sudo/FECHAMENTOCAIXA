@@ -56,6 +56,7 @@ export function renderClosures() {
   }
 
   box.innerHTML = list.map(c => buildCard(c, getPrevTroco(c))).join('')
+  requestAnimationFrame(() => window.__refreshIcons?.())
 }
 
 function buildCard(c, prevTrocoFinal) {
@@ -154,9 +155,9 @@ function buildCard(c, prevTrocoFinal) {
               <div style="display:flex;gap:6px">
                 <button class="btn secondary small"
                   onclick="window.__history.openPhoto('${esc(f.url)}','${esc(f.nome || 'Foto ' + (i + 1))}','${esc(c.data || '')}','${esc(c.operador || '')}')">
-                  ${todasFotos.length > 1 ? 'Ver ' + (i + 1) : 'Ver foto'}
+                  <i data-lucide="image"></i> ${todasFotos.length > 1 ? 'Ver ' + (i + 1) : 'Ver foto'}
                 </button>
-                <a class="btn light small" href="${esc(f.url)}" target="_blank" rel="noopener">Nova aba</a>
+                <a class="btn light small" href="${esc(f.url)}" target="_blank" rel="noopener"><i data-lucide="external-link"></i> Nova aba</a>
               </div>
             </div>`).join('')}
         </div>

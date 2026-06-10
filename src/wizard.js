@@ -16,6 +16,7 @@ export function render() {
   document.getElementById('stepBody').innerHTML = stepFns[state.step - 1]()
 
   attachMoneyListeners()
+  requestAnimationFrame(() => window.__refreshIcons?.())
 
   // Restaurar preview da foto se existir
   if (state.step === 3 && state.current.fotoPreview) {
@@ -41,11 +42,11 @@ function renderSteps() {
 
 function footer() {
   const back = state.step > 1
-    ? `<button class="btn light" onclick="window.__wizard.prev()">← Voltar</button>`
-    : `<button class="btn light" onclick="window.__wizard.startNew()">Novo fechamento</button>`
+    ? `<button class="btn light" onclick="window.__wizard.prev()"><i data-lucide="arrow-left"></i> Voltar</button>`
+    : `<button class="btn light" onclick="window.__wizard.startNew()"><i data-lucide="plus"></i> Novo fechamento</button>`
   const fwd = state.step < 8
-    ? `<button class="btn primary" onclick="window.__wizard.next()">Continuar →</button>`
-    : `<button class="btn success" onclick="window.__wizard.finish()">Fechar caixa e salvar</button>`
+    ? `<button class="btn primary" onclick="window.__wizard.next()">Continuar <i data-lucide="arrow-right"></i></button>`
+    : `<button class="btn success" onclick="window.__wizard.finish()"><i data-lucide="check-circle"></i> Fechar caixa e salvar</button>`
   return `<div class="btnrow"><div>${back}</div><div>${fwd}</div></div>`
 }
 
@@ -303,7 +304,7 @@ function stepMachine() {
             placeholder="R$ 0,00" inputmode="decimal">
         </div>
         <div class="btns">
-          <button class="btn success small" onclick="window.__wizard.confirmPay('${f.id}')">Confirmar</button>
+          <button class="btn success small" onclick="window.__wizard.confirmPay('${f.id}')"><i data-lucide="check"></i> Confirmar</button>
         </div>
       </div>
       ${p.edited ? '<div class="alert warn" style="margin-top:10px">Valor alterado manualmente.</div>' : ''}
@@ -326,7 +327,7 @@ function stepMachine() {
              : `<div style="width:64px;height:64px;border-radius:10px;background:#f3f4f6;border:2px solid #e5e7eb;display:flex;align-items:center;justify-content:center;font-size:11px;color:#9ca3af">Foto ${i+1}</div>`
            ).join('')}
          </div>
-         <button class="btn secondary small" onclick="window.__wizard.addPhoto()">+ Solicitar outra foto</button>
+         <button class="btn secondary small" onclick="window.__wizard.addPhoto()"><i data-lucide="camera"></i> Solicitar outra foto</button>
        </div>`
     : ''
 
@@ -362,7 +363,7 @@ function stepMachine() {
         ${ocrBanner}
         ${fotosGallery}
         <div class="btns" style="margin-top:10px">
-          <button class="btn secondary" onclick="window.__ocr.retryOcr()">Tentar ler a foto novamente</button>
+          <button class="btn secondary" onclick="window.__ocr.retryOcr()"><i data-lucide="rotate-cw"></i> Tentar novamente</button>
         </div>
         <details style="margin-top:14px">
           <summary>Enviar foto manualmente (alternativa)</summary>
@@ -449,7 +450,7 @@ function stepCash() {
   const list = state.current.cash.map((v, i) =>
     `<div class="cashitem" style="display:flex;justify-content:space-between;align-items:center">
       <b>${money(v)}</b>
-      <button class="btn danger small" onclick="window.__wizard.removeCash(${i})">Remover</button>
+      <button class="btn danger small" onclick="window.__wizard.removeCash(${i})"><i data-lucide="x"></i></button>
     </div>`
   ).join('')
 
@@ -461,8 +462,8 @@ function stepCash() {
             onkeydown="if(event.key==='Enter'){event.preventDefault();window.__wizard.addCash()}">
         </div>
         <div class="btns">
-          <button class="btn secondary" onclick="window.__wizard.addCash()">Adicionar valor</button>
-          <button class="btn light" onclick="window.__wizard.clearCash()">Limpar</button>
+          <button class="btn secondary" onclick="window.__wizard.addCash()"><i data-lucide="plus"></i> Adicionar</button>
+          <button class="btn light" onclick="window.__wizard.clearCash()"><i data-lucide="trash-2"></i> Limpar</button>
         </div>
         <div class="hint">Depois de dar Enter, o campo fica selecionado para continuar digitando.</div>
       </div>
@@ -532,7 +533,7 @@ function stepTotvs() {
     `<tr ${r.destaque ? 'style="background:linear-gradient(135deg,#eff6ff,#dbeafe)"' : ''}>
      <td ${r.destaque ? 'style="font-weight:1000;color:#1e40af"' : ''}>${esc(r.nome)}</td>
      <td class="num" ${r.destaque ? 'style="color:#1e40af"' : ''}>${money(r.valor)}</td>
-     <td><button class="btn light small" onclick="window.__wizard.copy('${money(r.valor)}')">Copiar</button></td>
+     <td><button class="btn light small" onclick="window.__wizard.copy('${money(r.valor)}')"><i data-lucide="copy"></i> Copiar</button></td>
     </tr>`
   ).join('')
   return `
@@ -545,7 +546,7 @@ function stepTotvs() {
       <tbody>${rows}</tbody>
     </table></div>
     <div class="btns" style="margin-top:14px">
-      <button class="btn secondary" onclick="window.__wizard.copyAll()">Copiar resumo</button>
+      <button class="btn secondary" onclick="window.__wizard.copyAll()"><i data-lucide="clipboard-list"></i> Copiar resumo</button>
     </div>
     ${footer()}`
 }
