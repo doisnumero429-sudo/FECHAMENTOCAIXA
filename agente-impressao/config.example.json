@@ -1,6 +1,26 @@
 {
-  "impressora_nome": "Bematech MP-4200 TH",
-  "pasta_saida": "C:\\ProgramData\\AracaGrill\\Impressora",
-  "intervalo_poll_segundos": 5,
-  "debug": false
+  "printer_name": "CAIXA",
+  "spool_dir": "C:\\Windows\\System32\\spool\\PRINTERS",
+  "output_dir": "C:\\AracaSpoolGuard\\capturas_caixa",
+  "aggregate_text_file": "TODAS_IMPRESSOES_CAIXA.txt",
+
+  "job_poll_interval_seconds": 0.03,
+  "spool_poll_interval_seconds": 0.005,
+  "notification_wait_ms": 120,
+  "job_file_watch_seconds": 18.0,
+  "job_file_watch_interval_seconds": 0.003,
+  "after_first_seen_extra_seconds": 1.2,
+  "stable_required_seconds": 0.12,
+  "copy_retries": 80,
+  "copy_retry_sleep_seconds": 0.006,
+
+  "extract_text": true,
+  "keep_raw_spl_backup": true,
+  "ignore_shd": true,
+  "set_high_process_priority": true,
+  "enable_keep_printed_jobs": true,
+  "enable_printservice_log": true,
+
+  "supabase_url": "https://SEU_PROJETO.supabase.co",
+  "supabase_key": "SUA_ANON_KEY_AQUI"
 }

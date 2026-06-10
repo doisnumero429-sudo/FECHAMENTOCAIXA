@@ -1,2 +1,3 @@
 pywin32>=306
-wmi>=1.5.1
+# wmi não é mais necessário (agente v7 usa win32print direto)
+# urllib já faz parte da stdlib do Python — sem dependência extra para Supabase

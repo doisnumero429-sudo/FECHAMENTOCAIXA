@@ -243,3 +243,85 @@ do $$ begin create policy caixa_audit_insert on public.caixa_auditoria for inser
 -- Storage
 do $$ begin create policy relatorios_caixa_read on storage.objects for select using (bucket_id = 'relatorios-caixa'); exception when duplicate_object then null; end $$;
 do $$ begin create policy relatorios_caixa_upload on storage.objects for insert with check (bucket_id = 'relatorios-caixa'); exception when duplicate_object then null; end $$;
+
+-- ─── Eventos do agente de impressora ────────────────────────────────────────
+-- Estas tabelas são alimentadas pelo agente Windows (agente-impressao/agente.py)
+-- em tempo real conforme documentos são impressos na impressora CAIXA.
+
+-- NFC-e (Cupom Fiscal Eletrônico) — cada mesa fechada
+create table if not exists public.caixa_nfce_eventos (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamptz not null default now(),
+  data_hora timestamptz not null,
+  data_turno date not null,
+  mesa text,
+  pedido text,
+  valor_total numeric(10,2),
+  gorjeta numeric(10,2),
+  -- credito | debito | pix | dinheiro | outros
+  forma_pagamento text,
+  raw_text text,
+  job_id integer,
+  -- sha256 do SPL garante idempotência: reiniciar o agente não gera duplicatas
+  sha256 text unique
+);
+
+create index if not exists idx_nfce_turno on public.caixa_nfce_eventos(data_turno desc);
+
+-- Sangrias — pagamentos de extras, músicos, retiradas cofre
+create table if not exists public.caixa_sangrias (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamptz not null default now(),
+  data_hora timestamptz not null,
+  data_turno date not null,
+  operador text,
+  motivo text,
+  valor numeric(10,2),
+  -- musico | extra | cofre | outro (auto-classificado pelo agente via motivo)
+  tipo text not null default 'outro' check (tipo in ('musico', 'extra', 'cofre', 'outro')),
+  -- true quando o operador confirmar/ajustar a classificação no fechamento
+  confirmado boolean not null default false,
+  job_id integer,
+  sha256 text unique
+);
+
+create index if not exists idx_sangrias_turno on public.caixa_sangrias(data_turno desc);
+
+-- Cancelamentos de produto
+create table if not exists public.caixa_cancelamentos (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamptz not null default now(),
+  data_hora timestamptz not null,
+  data_turno date not null,
+  mesa text,
+  operador text,
+  motivo text,
+  produto text,
+  qtde numeric(8,3),
+  valor numeric(10,2),
+  job_id integer,
+  sha256 text unique
+);
+
+create index if not exists idx_cancelamentos_turno on public.caixa_cancelamentos(data_turno desc);
+
+-- RLS: leitura e inserção livres (agente usa anon key); edição/exclusão bloqueadas
+alter table public.caixa_nfce_eventos enable row level security;
+alter table public.caixa_sangrias enable row level security;
+alter table public.caixa_cancelamentos enable row level security;
+
+do $$ begin create policy nfce_select on public.caixa_nfce_eventos for select using (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy nfce_insert on public.caixa_nfce_eventos for insert with check (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy nfce_update on public.caixa_nfce_eventos for update using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
+do $$ begin create policy nfce_delete on public.caixa_nfce_eventos for delete using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
+
+do $$ begin create policy sangrias_select on public.caixa_sangrias for select using (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy sangrias_insert on public.caixa_sangrias for insert with check (true); exception when duplicate_object then null; end $$;
+-- UPDATE aberto para que o wizard possa confirmar/reclassificar a sangria
+do $$ begin create policy sangrias_update on public.caixa_sangrias for update using (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy sangrias_delete on public.caixa_sangrias for delete using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
+
+do $$ begin create policy cancel_select on public.caixa_cancelamentos for select using (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy cancel_insert on public.caixa_cancelamentos for insert with check (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy cancel_update on public.caixa_cancelamentos for update using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
+do $$ begin create policy cancel_delete on public.caixa_cancelamentos for delete using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
