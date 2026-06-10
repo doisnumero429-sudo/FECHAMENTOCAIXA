@@ -33,6 +33,12 @@ export function render() {
   if (state.step === 7 && state.current.fitaStatus === 'aguardando' && !state.fitaPollInterval) {
     startFitaPolling()
   }
+  // Registra t0 ao entrar na etapa 6 (ANTES de o usuário pressionar F10 no TOTVS).
+  // Se registrássemos ao clicar "Já encerrei", a fita já teria chegado ao Supabase
+  // segundos antes e a query created_at > t0 não a encontraria.
+  if (state.step === 6 && !state.current.fitaT0) {
+    state.current.fitaT0 = new Date().toISOString()
+  }
   renderSteps()
   document.getElementById('stepTitle').textContent = STEPS[state.step - 1][0]
   document.getElementById('stepHelp').textContent = STEPS[state.step - 1][1]
@@ -1343,7 +1349,8 @@ export function limparAprovacao() {
 }
 
 export function iniciarBuscaFita() {
-  state.current.fitaT0 = new Date().toISOString()
+  // fitaT0 já foi gravado ao entrar na etapa 6; só define fallback se por algum motivo não estiver
+  if (!state.current.fitaT0) state.current.fitaT0 = new Date().toISOString()
   state.current.fitaStatus = 'aguardando'
   state.step = 7
   render()

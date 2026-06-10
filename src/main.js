@@ -70,7 +70,7 @@ function showPage(id) {
   document.getElementById('subtitle').textContent = subtitle
   if (id === 'config') renderConfig()
   if (id === 'consulta') renderClosures()
-  if (id === 'dashboard') renderDashboard()
+  if (id === 'dashboard') renderDashboard(true)
   requestAnimationFrame(refreshIcons)
 }
 
