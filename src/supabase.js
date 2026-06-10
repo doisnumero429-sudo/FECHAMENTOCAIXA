@@ -296,3 +296,57 @@ export async function saveFechamentoResumo(current, sangriasTurno, cancelamentos
     conciliacao_diferenca_total: Number(current.conciliacao?.diffComparavel || 0)
   }, { onConflict: 'fechamento_id' })
 }
+
+// ─── Aprovação de gerente (Fase 2) ───────────────────────────────────────────
+
+export async function loadGerentes() {
+  if (!state.sb) { state.gerentes = []; return [] }
+  try {
+    const { data, error } = await state.sb.from('caixa_gerentes_publico').select('*')
+    if (error) { state.gerentes = []; return [] }
+    state.gerentes = (data || []).map(g => ({ id: g.id, nome: g.nome }))
+    return state.gerentes
+  } catch (e) {
+    state.gerentes = []
+    return []
+  }
+}
+
+// Chama a função SECURITY DEFINER que valida o PIN no Postgres (bcrypt).
+// Retorna { ok, ... } — nunca lê nem recebe o hash do gerente.
+export async function aprovarComGerente({ fechamentoId, gerenteId, pin, decisao, observacao, contexto }) {
+  if (!state.sb) return { ok: false, erro: 'sem_conexao' }
+  try {
+    const { data, error } = await state.sb.rpc('gerente_aprovar', {
+      p_fechamento_id: fechamentoId,
+      p_gerente_id: gerenteId,
+      p_pin: pin,
+      p_decisao: decisao,
+      p_observacao: observacao || '',
+      p_contexto: contexto || {}
+    })
+    if (error) return { ok: false, erro: 'rpc_indisponivel', detalhe: error.message }
+    return data || { ok: false, erro: 'sem_resposta' }
+  } catch (e) {
+    return { ok: false, erro: 'rpc_indisponivel' }
+  }
+}
+
+export async function loadAprovacoes(fechamentoIds) {
+  if (!state.sb || !fechamentoIds?.length) return {}
+  try {
+    const { data, error } = await state.sb
+      .from('caixa_aprovacoes')
+      .select('*')
+      .in('fechamento_id', fechamentoIds)
+      .order('criado_em', { ascending: false })
+    if (error) return {}
+    const byFech = {}
+    for (const a of data || []) {
+      if (!byFech[a.fechamento_id]) byFech[a.fechamento_id] = a
+    }
+    return byFech
+  } catch (e) {
+    return {}
+  }
+}

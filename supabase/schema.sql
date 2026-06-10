@@ -427,3 +427,95 @@ alter table public.caixa_fechamento_resumo
   add column if not exists conciliacao_status text default 'sem_diferenca';
 alter table public.caixa_fechamento_resumo
   add column if not exists conciliacao_diferenca_total numeric(12,2) not null default 0;
+
+-- ─── Aprovação de gerente por PIN (v5 — Fase 2) ──────────────────────────────
+-- Verificação segura do PIN SEM service_role no frontend: o PIN é validado
+-- dentro do Postgres por função SECURITY DEFINER usando pgcrypto (bcrypt).
+-- O hash nunca é lido pelo cliente — a tabela tem RLS sem políticas para anon.
+
+create extension if not exists pgcrypto with schema extensions;
+
+create table if not exists public.caixa_gerentes (
+  id text primary key,
+  nome text not null,
+  pin_hash text not null,
+  ativo boolean not null default true,
+  tentativas_falhas int not null default 0,
+  bloqueado_ate timestamptz,
+  criado_em timestamptz not null default now()
+);
+-- RLS habilitado e SEM política para anon → o cliente nunca lê o hash.
+alter table public.caixa_gerentes enable row level security;
+
+-- View pública só com id e nome (para o seletor de gerente). Não expõe o hash.
+create or replace view public.caixa_gerentes_publico as
+  select id, nome from public.caixa_gerentes where ativo;
+grant select on public.caixa_gerentes_publico to anon, authenticated;
+
+-- Registro de aprovações/recusas (trilha de auditoria)
+create table if not exists public.caixa_aprovacoes (
+  id text primary key,
+  fechamento_id text,
+  gerente_id text,
+  gerente_nome text,
+  decisao text not null check (decisao in ('aprovar','recusar')),
+  observacao text,
+  contexto jsonb not null default '{}'::jsonb,
+  criado_em timestamptz not null default now()
+);
+create index if not exists idx_aprovacoes_fechamento on public.caixa_aprovacoes(fechamento_id);
+alter table public.caixa_aprovacoes enable row level security;
+-- Leitura aberta (conferência). Escrita SÓ pela função SECURITY DEFINER abaixo.
+do $$ begin create policy aprovacoes_select on public.caixa_aprovacoes for select using (true); exception when duplicate_object then null; end $$;
+
+-- Função de aprovação: valida o PIN (bcrypt), aplica lockout e grava a decisão.
+create or replace function public.gerente_aprovar(
+  p_fechamento_id text,
+  p_gerente_id text,
+  p_pin text,
+  p_decisao text,
+  p_observacao text default '',
+  p_contexto jsonb default '{}'::jsonb
+) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $func$
+declare
+  g record;
+  v_id text;
+begin
+  if p_decisao not in ('aprovar','recusar') then
+    return jsonb_build_object('ok', false, 'erro', 'decisao_invalida');
+  end if;
+  select * into g from public.caixa_gerentes where id = p_gerente_id and ativo;
+  if not found then
+    return jsonb_build_object('ok', false, 'erro', 'gerente_invalido');
+  end if;
+  -- Lockout após tentativas repetidas
+  if g.bloqueado_ate is not null and g.bloqueado_ate > now() then
+    return jsonb_build_object('ok', false, 'erro', 'bloqueado', 'bloqueado_ate', g.bloqueado_ate);
+  end if;
+  -- Verificação bcrypt: recomputa o hash usando o próprio hash como salt
+  if g.pin_hash <> crypt(coalesce(p_pin,''), g.pin_hash) then
+    update public.caixa_gerentes
+      set tentativas_falhas = tentativas_falhas + 1,
+          bloqueado_ate = case when tentativas_falhas + 1 >= 5 then now() + interval '15 minutes' else null end
+      where id = g.id;
+    return jsonb_build_object('ok', false, 'erro', 'pin_incorreto',
+      'tentativas_restantes', greatest(0, 5 - (g.tentativas_falhas + 1)));
+  end if;
+  -- Sucesso: zera tentativas e grava a aprovação
+  update public.caixa_gerentes set tentativas_falhas = 0, bloqueado_ate = null where id = g.id;
+  v_id := 'aprov_' || replace(gen_random_uuid()::text, '-', '');
+  insert into public.caixa_aprovacoes (id, fechamento_id, gerente_id, gerente_nome, decisao, observacao, contexto)
+    values (v_id, p_fechamento_id, g.id, g.nome, p_decisao, p_observacao, coalesce(p_contexto,'{}'::jsonb));
+  return jsonb_build_object('ok', true, 'aprovacao_id', v_id, 'gerente_nome', g.nome, 'decisao', p_decisao);
+end;
+$func$;
+
+-- Só anon/authenticated podem executar (o frontend usa anon)
+revoke all on function public.gerente_aprovar(text,text,text,text,text,jsonb) from public;
+grant execute on function public.gerente_aprovar(text,text,text,text,text,jsonb) to anon, authenticated;
+
+-- Cadastre os gerentes (troque id, nome e PIN). Execute uma vez por gerente:
+-- insert into public.caixa_gerentes (id, nome, pin_hash)
+--   values ('gerente1','Nome do Gerente', extensions.crypt('1234', extensions.gen_salt('bf')))
+--   on conflict (id) do update set pin_hash = excluded.pin_hash, nome = excluded.nome, ativo = true;

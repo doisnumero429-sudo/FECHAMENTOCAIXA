@@ -296,6 +296,36 @@
                 <summary>
                   <div class="config-summary">
                     <div>
+                      <span class="config-title">Gerentes (aprovação por PIN)</span>
+                      <span class="config-desc">Quem pode aprovar diferenças no fechamento. O PIN fica protegido no banco.</span>
+                    </div>
+                    <div class="config-right">
+                      <span class="config-count" id="gerentesCount">0 cadastrados</span>
+                      <span class="config-chevron"></span>
+                    </div>
+                  </div>
+                </summary>
+                <div class="config-content">
+                  <div class="alert blue">
+                    A aprovação valida o PIN <b>no servidor</b> (bcrypt) — o app nunca lê nem guarda o PIN.
+                    O <b>service_role nunca é usado no frontend</b>. Para cadastrar gerentes, edite e rode o SQL abaixo no Supabase.
+                  </div>
+                  <div class="grid" id="gerentesList"></div>
+                  <div class="btnrow" style="margin-top:12px">
+                    <button class="btn secondary" onclick="window.__config.refreshGerentes()">Atualizar lista</button>
+                    <button class="btn primary" onclick="window.__config.copyGerentesSql()">Copiar SQL de gerentes</button>
+                  </div>
+                  <div class="alert warn" style="margin-top:12px">
+                    Na última linha do SQL, troque <b>id</b>, <b>nome</b> e <b>PIN</b> antes de rodar. Use um PIN de 4 a 6 dígitos. Rode uma linha por gerente.
+                  </div>
+                  <textarea id="gerentesSqlBox" style="min-height:320px;margin-top:8px" readonly></textarea>
+                </div>
+              </details>
+
+              <details class="config-section">
+                <summary>
+                  <div class="config-summary">
+                    <div>
                       <span class="config-title">SQL Supabase</span>
                       <span class="config-desc">Estrutura do banco, tabelas, storage e permissões.</span>
                     </div>

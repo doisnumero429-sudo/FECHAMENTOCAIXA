@@ -3,7 +3,7 @@ import { money, parseMoney, moneyInput, esc, norm, toast, attachMoneyListeners, 
 import { startPhotoRequest, stopPhotoRequest, handleFallbackUpload, handleManualAdvance, requestAnotherPhoto } from './photo-request.js'
 import { retryOcr, applyJson, applyOcrText } from './ocr.js'
 import { saveLearnedAssociation } from './ai-ocr.js'
-import { uploadPhoto, saveClosure, loadCloudClosures, loadSangriasTurno, loadCancelamentosTurno, confirmSangrias, saveFechamentoResumo, loadNfceTurno } from './supabase.js'
+import { uploadPhoto, saveClosure, loadCloudClosures, loadSangriasTurno, loadCancelamentosTurno, confirmSangrias, saveFechamentoResumo, loadNfceTurno, aprovarComGerente } from './supabase.js'
 import { detectarCompensacoes, narrativaCompensacao, classificarDiff, tolDe, sugerirStatus, STATUS } from './conciliacao.js'
 
 export function render() {
@@ -803,6 +803,44 @@ function _buildDiagDigitacao() {
     </details>`
 }
 
+function _aprovacaoHtml() {
+  const ap = state.current.aprovacao
+  if (ap) {
+    const aprovado = ap.decisao === 'aprovar'
+    return `<div class="alert ${aprovado ? 'ok' : 'bad'}">
+        <b>${aprovado ? '✅ Aprovado' : '❌ Recusado'} por ${esc(ap.gerente_nome)}</b><br>
+        <span style="font-size:12px;color:#6b7280">${new Date(ap.criado_em).toLocaleString('pt-BR')}</span>
+        ${ap.observacao ? `<div style="margin-top:6px;font-size:13px">${esc(ap.observacao)}</div>` : ''}
+      </div>
+      <button class="btn light small" style="margin-top:8px" onclick="window.__wizard.limparAprovacao()">Refazer aprovação</button>`
+  }
+  if (!state.gerentes?.length)
+    return `<div class="hint">Nenhum gerente cadastrado. Configure em <b>Configurações → Gerentes</b> para habilitar a aprovação por PIN.</div>`
+  const opts = state.gerentes.map(g => `<option value="${esc(g.id)}">${esc(g.nome)}</option>`).join('')
+  return `
+    <div class="field"><label>Gerente</label>
+      <select id="aprovGerente"><option value="">Selecione...</option>${opts}</select></div>
+    <div class="field"><label>PIN do gerente</label>
+      <input id="aprovPin" type="password" inputmode="numeric" autocomplete="off" placeholder="••••" style="letter-spacing:3px"></div>
+    <div class="field"><label>Observação do gerente <span style="color:#6b7280;font-weight:400">(opcional)</span></label>
+      <textarea id="aprovObs" rows="2" placeholder="Ex: conferido o extrato, troca de modalidade confirmada."></textarea></div>
+    <div class="btns" style="margin-top:6px">
+      <button class="btn success" onclick="window.__wizard.enviarAprovacao('aprovar')"><i data-lucide="check-circle"></i> Aprovar</button>
+      <button class="btn danger" onclick="window.__wizard.enviarAprovacao('recusar')"><i data-lucide="x"></i> Recusar</button>
+    </div>
+    <div class="hint" style="margin-top:6px">O PIN é verificado no servidor. Após 5 tentativas erradas o gerente fica bloqueado por 15 min.</div>`
+}
+
+function _buildAprovacao(autoOpen) {
+  return `
+    <details ${autoOpen ? 'open' : ''} style="margin-top:16px">
+      <summary style="cursor:pointer;font-weight:800;font-size:14px;padding:10px 0">
+        🔐 Aprovação do gerente${state.current.aprovacao ? ' ✓' : ''}
+      </summary>
+      <div id="aprovacaoInner" style="padding-top:12px">${_aprovacaoHtml()}</div>
+    </details>`
+}
+
 function stepResult() {
   calc()
 
@@ -958,6 +996,7 @@ function stepResult() {
             </div>
           </div>
         </div>
+        ${_buildAprovacao(statusSugerido === 'pendente' || statusSugerido === 'recusada')}
       </div>
     </div>
     ${footer()}`
@@ -1025,9 +1064,54 @@ export function autofillCompensacao(i) {
   toast('Explicação preenchida automaticamente.')
 }
 
+export async function enviarAprovacao(decisao) {
+  const c = state.current
+  const gerenteId = document.getElementById('aprovGerente')?.value
+  const pin = document.getElementById('aprovPin')?.value || ''
+  const obs = document.getElementById('aprovObs')?.value.trim() || ''
+  if (!gerenteId) return toast('Selecione o gerente.')
+  if (!pin) return toast('Digite o PIN do gerente.')
+
+  const contexto = {
+    diferenca: c.conciliacao?.diffComparavel ?? null,
+    status_sugerido: c.conciliacao?.statusSugerido ?? null,
+    compensacoes: c.conciliacao?.compensacoes ?? [],
+    operador: c.operador, turno: c.turno,
+    obs_funcionario: c.obsDiferenca || ''
+  }
+  toast('Verificando PIN...')
+  const r = await aprovarComGerente({ fechamentoId: c.id, gerenteId, pin, decisao, observacao: obs, contexto })
+  if (!r.ok) {
+    const msgs = {
+      pin_incorreto: `PIN incorreto.${r.tentativas_restantes != null ? ' Tentativas restantes: ' + r.tentativas_restantes : ''}`,
+      bloqueado: 'Gerente bloqueado por excesso de tentativas. Aguarde alguns minutos.',
+      gerente_invalido: 'Gerente inválido.',
+      decisao_invalida: 'Decisão inválida.',
+      rpc_indisponivel: 'Aprovação não configurada no banco. Rode o SQL de gerentes (Configurações → Gerentes).',
+      sem_conexao: 'Sem conexão com a nuvem.'
+    }
+    return toast(msgs[r.erro] || 'Não foi possível registrar a aprovação.')
+  }
+  c.aprovacao = {
+    aprovacao_id: r.aprovacao_id, gerente_id: gerenteId, gerente_nome: r.gerente_nome,
+    decisao, observacao: obs, criado_em: new Date().toISOString()
+  }
+  c.conciliacaoStatus = decisao === 'aprovar' ? 'aprovada' : 'recusada'
+  toast(decisao === 'aprovar' ? 'Aprovado pelo gerente.' : 'Recusado pelo gerente.')
+  render()
+}
+
+export function limparAprovacao() {
+  state.current.aprovacao = null
+  render()
+}
+
 // Define o status final da conciliação a partir da sugestão automática + ação do operador.
 function finalizarStatusConciliacao() {
   const c = state.current
+  // Aprovação do gerente tem precedência sobre o status automático.
+  if (c.aprovacao?.decisao === 'aprovar') { c.conciliacaoStatus = 'aprovada'; return }
+  if (c.aprovacao?.decisao === 'recusar') { c.conciliacaoStatus = 'recusada'; return }
   const sugerido = c.conciliacao?.statusSugerido || 'sem_diferenca'
   const dig = c.digitacaoTotvs || {}
   const usouDigitacao = (c.obsDiferenca || '').startsWith('Erro de digitação')

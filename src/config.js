@@ -1,6 +1,79 @@
 import { state, DEFAULT_FORMS, DEFAULT_TOLERANCIAS, clone, uid, activeForms } from './state.js'
 import { money, parseMoney, esc, norm, toast } from './ui.js'
-import { saveConfigCloud, syncFromCloud } from './supabase.js'
+import { saveConfigCloud, syncFromCloud, loadGerentes } from './supabase.js'
+
+// SQL da Fase 2 (aprovação de gerente por PIN). Copiável na seção Gerentes.
+export const SQL_GERENTES = `-- APROVAÇÃO DE GERENTE POR PIN — verificação segura sem service_role no frontend.
+-- O PIN é validado dentro do Postgres (função SECURITY DEFINER + pgcrypto/bcrypt).
+-- O hash nunca é lido pelo cliente. Cole no SQL Editor do Supabase e execute.
+
+create extension if not exists pgcrypto with schema extensions;
+
+create table if not exists public.caixa_gerentes (
+  id text primary key,
+  nome text not null,
+  pin_hash text not null,
+  ativo boolean not null default true,
+  tentativas_falhas int not null default 0,
+  bloqueado_ate timestamptz,
+  criado_em timestamptz not null default now()
+);
+alter table public.caixa_gerentes enable row level security;
+-- (sem policy para anon: o cliente nunca lê o hash)
+
+create or replace view public.caixa_gerentes_publico as
+  select id, nome from public.caixa_gerentes where ativo;
+grant select on public.caixa_gerentes_publico to anon, authenticated;
+
+create table if not exists public.caixa_aprovacoes (
+  id text primary key,
+  fechamento_id text,
+  gerente_id text,
+  gerente_nome text,
+  decisao text not null check (decisao in ('aprovar','recusar')),
+  observacao text,
+  contexto jsonb not null default '{}'::jsonb,
+  criado_em timestamptz not null default now()
+);
+create index if not exists idx_aprovacoes_fechamento on public.caixa_aprovacoes(fechamento_id);
+alter table public.caixa_aprovacoes enable row level security;
+do $$ begin create policy aprovacoes_select on public.caixa_aprovacoes for select using (true); exception when duplicate_object then null; end $$;
+
+create or replace function public.gerente_aprovar(
+  p_fechamento_id text, p_gerente_id text, p_pin text,
+  p_decisao text, p_observacao text default '', p_contexto jsonb default '{}'::jsonb
+) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $func$
+declare g record; v_id text;
+begin
+  if p_decisao not in ('aprovar','recusar') then
+    return jsonb_build_object('ok', false, 'erro', 'decisao_invalida'); end if;
+  select * into g from public.caixa_gerentes where id = p_gerente_id and ativo;
+  if not found then return jsonb_build_object('ok', false, 'erro', 'gerente_invalido'); end if;
+  if g.bloqueado_ate is not null and g.bloqueado_ate > now() then
+    return jsonb_build_object('ok', false, 'erro', 'bloqueado', 'bloqueado_ate', g.bloqueado_ate); end if;
+  if g.pin_hash <> crypt(coalesce(p_pin,''), g.pin_hash) then
+    update public.caixa_gerentes
+      set tentativas_falhas = tentativas_falhas + 1,
+          bloqueado_ate = case when tentativas_falhas + 1 >= 5 then now() + interval '15 minutes' else null end
+      where id = g.id;
+    return jsonb_build_object('ok', false, 'erro', 'pin_incorreto',
+      'tentativas_restantes', greatest(0, 5 - (g.tentativas_falhas + 1))); end if;
+  update public.caixa_gerentes set tentativas_falhas = 0, bloqueado_ate = null where id = g.id;
+  v_id := 'aprov_' || replace(gen_random_uuid()::text, '-', '');
+  insert into public.caixa_aprovacoes (id, fechamento_id, gerente_id, gerente_nome, decisao, observacao, contexto)
+    values (v_id, p_fechamento_id, g.id, g.nome, p_decisao, p_observacao, coalesce(p_contexto,'{}'::jsonb));
+  return jsonb_build_object('ok', true, 'aprovacao_id', v_id, 'gerente_nome', g.nome, 'decisao', p_decisao);
+end; $func$;
+
+revoke all on function public.gerente_aprovar(text,text,text,text,text,jsonb) from public;
+grant execute on function public.gerente_aprovar(text,text,text,text,text,jsonb) to anon, authenticated;
+
+-- ↓↓↓ EDITE id, nome e PIN e rode UMA linha por gerente ↓↓↓
+insert into public.caixa_gerentes (id, nome, pin_hash)
+  values ('gerente1','Nome do Gerente', extensions.crypt('TROQUE-O-PIN', extensions.gen_salt('bf')))
+  on conflict (id) do update set pin_hash = excluded.pin_hash, nome = excluded.nome, ativo = true;
+`
 
 export const SQL_TEXT = `-- FECHAMENTO DE CAIXA ARAÇÁ GRILL — Schema completo
 -- Cole no SQL Editor do Supabase e execute.
@@ -252,10 +325,38 @@ export function renderConfig() {
   renderList('shiftsList', state.shifts, 'shift')
   renderForms()
   renderTolerancias()
+  renderGerentes()
   updateConfigCounters()
 
   const sqlBox = document.getElementById('sqlBox')
   if (sqlBox) sqlBox.value = SQL_TEXT
+}
+
+function renderGerentes() {
+  const el = document.getElementById('gerentesList')
+  if (el) {
+    const list = state.gerentes || []
+    el.innerHTML = list.length
+      ? list.map(g => `<div class="config" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div><b>${esc(g.nome)}</b> <span style="color:#9ca3af;font-size:12px">(${esc(g.id)})</span></div>
+          <span class="chip chipblue">🔐 PIN protegido</span>
+        </div>`).join('')
+      : '<div class="hint">Nenhum gerente cadastrado. Use o SQL abaixo (o PIN fica protegido por bcrypt no banco — o app nunca lê o hash).</div>'
+  }
+  const sqlBox = document.getElementById('gerentesSqlBox')
+  if (sqlBox) sqlBox.value = SQL_GERENTES
+}
+
+export function copyGerentesSql() {
+  navigator.clipboard?.writeText(SQL_GERENTES)
+  toast('SQL de gerentes copiado.')
+}
+
+export async function refreshGerentes() {
+  await loadGerentes()
+  renderGerentes()
+  updateConfigCounters()
+  toast('Lista de gerentes atualizada.')
 }
 
 const ACOES_TOL = [
@@ -414,6 +515,8 @@ export function updateConfigCounters() {
   if (fo) fo.textContent = `${state.forms.filter(x => x.ativo && x.aparece).length} no fechamento · ${state.forms.length} total`
   const to = document.getElementById('toleranciasCount')
   if (to) to.textContent = `${(state.tolerancias || []).length} regras`
+  const ge = document.getElementById('gerentesCount')
+  if (ge) ge.textContent = `${(state.gerentes || []).length} cadastrados`
 }
 
 function listFor(kind) { return kind === 'operator' ? state.operators : state.shifts }

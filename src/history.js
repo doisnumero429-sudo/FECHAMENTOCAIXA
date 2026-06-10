@@ -19,21 +19,30 @@ function statusSummaryChip(c) {
   return `<span class="chip" style="color:${cs.c};background:${cs.bg};border-color:transparent">${esc(st.label)}</span>`
 }
 
-// Resumo da conciliação no card expandido (status + diferença comparável + compensações).
+// Resumo da conciliação no card expandido (status + diferença comparável + compensações + aprovação).
 function conciliacaoResumoHtml(c) {
   const cc = c.conciliacao
-  if (!cc) return ''
+  const ap = c.aprovacao
+  if (!cc && !ap && !c.conciliacaoStatus) return ''
   const st = STATUS[c.conciliacaoStatus] || STATUS.sem_diferenca
   const cs = statusChipStyle(st.nivel)
-  const comps = (cc.compensacoes || []).map(p =>
+  const comps = (cc?.compensacoes || []).map(p =>
     `<div style="font-size:13px;margin-top:6px">🔄 Troca <b>${esc(p.negLabel)}</b> ↔ <b>${esc(p.posLabel)}</b> · ~${money(p.valor)} <span style="color:#6b7280">(${CONF_LABEL[p.confianca] || p.confianca})</span></div>`
   ).join('')
+  const apHtml = ap
+    ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);font-size:13px">
+         ${ap.decisao === 'aprovar' ? '✅' : '❌'} <b>${ap.decisao === 'aprovar' ? 'Aprovado' : 'Recusado'}</b> por ${esc(ap.gerente_nome || '-')}
+         <span style="color:#9ca3af">· ${ap.criado_em ? new Date(ap.criado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+         ${ap.observacao ? `<div style="margin-top:4px;color:#6b7280">"${esc(ap.observacao)}"</div>` : ''}
+       </div>`
+    : ''
   return `<div style="margin-top:10px;padding:12px;background:var(--soft);border-radius:12px">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
       <span style="font-size:12px;font-weight:800;padding:4px 12px;border-radius:999px;color:${cs.c};background:${cs.bg}">${esc(st.label)}</span>
-      <span style="font-size:13px;color:#374151">Diferença comparável (cartões/PIX/dinheiro): <b>${money(cc.diffComparavel || 0)}</b></span>
+      ${cc ? `<span style="font-size:13px;color:#374151">Diferença comparável (cartões/PIX/dinheiro): <b>${money(cc.diffComparavel || 0)}</b></span>` : ''}
     </div>
     ${comps}
+    ${apHtml}
   </div>`
 }
 
