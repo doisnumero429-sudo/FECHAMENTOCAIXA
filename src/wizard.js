@@ -889,16 +889,15 @@ function _buildDiagDigitacao() {
 function _aprovacaoHtml() {
   const ap = state.current.aprovacao
   if (ap) {
-    const aprovado = ap.decisao === 'aprovar'
-    return `<div class="alert ${aprovado ? 'ok' : 'bad'}">
-        <b>${aprovado ? '✅ Aprovado' : '❌ Recusado'} por ${esc(ap.gerente_nome)}</b><br>
+    return `<div class="alert ok">
+        <b>✅ ${esc(ap.gerente_nome)} deu ciência</b><br>
         <span style="font-size:12px;color:#6b7280">${new Date(ap.criado_em).toLocaleString('pt-BR')}</span>
         ${ap.observacao ? `<div style="margin-top:6px;font-size:13px">${esc(ap.observacao)}</div>` : ''}
       </div>
-      <button class="btn light small" style="margin-top:8px" onclick="window.__wizard.limparAprovacao()">Refazer aprovação</button>`
+      <button class="btn light small" style="margin-top:8px" onclick="window.__wizard.limparAprovacao()">Desfazer ciência</button>`
   }
   if (!state.gerentes?.length)
-    return `<div class="hint">Nenhum gerente cadastrado. Configure em <b>Configurações → Gerentes</b> para habilitar a aprovação por PIN.</div>`
+    return `<div class="hint">Nenhum gerente cadastrado. Configure em <b>Configurações → Gerentes</b> para habilitar a ciência por PIN.</div>`
   const opts = state.gerentes.map(g => `<option value="${esc(g.id)}">${esc(g.nome)}</option>`).join('')
   return `
     <div class="field"><label>Gerente</label>
@@ -908,8 +907,7 @@ function _aprovacaoHtml() {
     <div class="field"><label>Observação do gerente <span style="color:#6b7280;font-weight:400">(opcional)</span></label>
       <textarea id="aprovObs" rows="2" placeholder="Ex: conferido o extrato, troca de modalidade confirmada."></textarea></div>
     <div class="btns" style="margin-top:6px">
-      <button class="btn success" onclick="window.__wizard.enviarAprovacao('aprovar')"><i data-lucide="check-circle"></i> Aprovar</button>
-      <button class="btn danger" onclick="window.__wizard.enviarAprovacao('recusar')"><i data-lucide="x"></i> Recusar</button>
+      <button class="btn success" onclick="window.__wizard.enviarAprovacao('aprovar')"><i data-lucide="check-circle"></i> Confirmar ciência</button>
     </div>
     <div class="hint" style="margin-top:6px">O PIN é verificado no servidor. Após 5 tentativas erradas o gerente fica bloqueado por 15 min.</div>`
 }
@@ -918,7 +916,7 @@ function _buildAprovacao(autoOpen) {
   return `
     <details ${autoOpen ? 'open' : ''} style="margin-top:16px">
       <summary style="cursor:pointer;font-weight:800;font-size:14px;padding:10px 0">
-        🔐 Aprovação do gerente${state.current.aprovacao ? ' ✓' : ''}
+        🔐 Ciência do gerente${state.current.aprovacao ? ' ✓' : ''}
       </summary>
       <div id="aprovacaoInner" style="padding-top:12px">${_aprovacaoHtml()}</div>
     </details>`
@@ -1325,17 +1323,17 @@ export async function enviarAprovacao(decisao) {
       bloqueado: 'Gerente bloqueado por excesso de tentativas. Aguarde alguns minutos.',
       gerente_invalido: 'Gerente inválido.',
       decisao_invalida: 'Decisão inválida.',
-      rpc_indisponivel: 'Aprovação não configurada no banco. Rode o SQL de gerentes (Configurações → Gerentes).',
+      rpc_indisponivel: 'Ciência não configurada no banco. Rode o SQL de gerentes (Configurações → Gerentes).',
       sem_conexao: 'Sem conexão com a nuvem.'
     }
-    return toast(msgs[r.erro] || 'Não foi possível registrar a aprovação.')
+    return toast(msgs[r.erro] || 'Não foi possível registrar a ciência.')
   }
   c.aprovacao = {
     aprovacao_id: r.aprovacao_id, gerente_id: gerenteId, gerente_nome: r.gerente_nome,
     decisao, observacao: obs, criado_em: new Date().toISOString()
   }
-  c.conciliacaoStatus = decisao === 'aprovar' ? 'aprovada' : 'recusada'
-  toast(decisao === 'aprovar' ? 'Aprovado pelo gerente.' : 'Recusado pelo gerente.')
+  c.conciliacaoStatus = 'aprovada'
+  toast('Gerente registrou ciência.')
   render()
 }
 

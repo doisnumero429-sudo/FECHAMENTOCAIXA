@@ -31,7 +31,7 @@ function conciliacaoResumoHtml(c) {
   ).join('')
   const apHtml = ap
     ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);font-size:13px">
-         ${ap.decisao === 'aprovar' ? '✅' : '❌'} <b>${ap.decisao === 'aprovar' ? 'Aprovado' : 'Recusado'}</b> por ${esc(ap.gerente_nome || '-')}
+         ${ap.decisao === 'recusar' ? '❌ <b>Diferença não confirmada</b>' : '✅ <b>Gerente ciente</b>'} — ${esc(ap.gerente_nome || '-')}
          <span style="color:#9ca3af">· ${ap.criado_em ? new Date(ap.criado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</span>
          ${ap.observacao ? `<div style="margin-top:4px;color:#6b7280">"${esc(ap.observacao)}"</div>` : ''}
        </div>`

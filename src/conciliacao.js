@@ -12,8 +12,8 @@ export const STATUS = {
   digitacao:        { label: 'Erro de digitação',        nivel: 'warn' },
   justificada:      { label: 'Justificada',              nivel: 'warn' },
   pendente:         { label: 'Pendente de conferência',  nivel: 'warn' },
-  aprovada:         { label: 'Aprovada pelo gerente',    nivel: 'ok'   },
-  recusada:         { label: 'Recusada pelo gerente',    nivel: 'bad'  },
+  aprovada:         { label: 'Gerente ciente',            nivel: 'ok'   },
+  recusada:         { label: 'Diferença não confirmada', nivel: 'bad'  },
   critica:          { label: 'Diferença crítica',        nivel: 'bad'  }
 }
 

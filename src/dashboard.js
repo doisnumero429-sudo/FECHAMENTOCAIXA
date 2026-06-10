@@ -398,7 +398,7 @@ function viewConcil(a) {
   const okN = (a.concilCount.sem_diferenca || 0) + (a.concilCount.tolerada || 0) + (a.concilCount.aprovada || 0)
   const pct = a.nFechamentos > 0 ? ((okN / a.nFechamentos) * 100).toFixed(0) : 0
   return `<div class="alert ok" style="margin-bottom:14px">
-      <b>${pct}% dos fechamentos sem pendência.</b> ${okN} de ${a.nFechamentos} ficaram sem diferença, dentro da tolerância ou aprovados pelo gerente.
+      <b>${pct}% dos fechamentos sem pendência.</b> ${okN} de ${a.nFechamentos} ficaram sem diferença, dentro da tolerância ou com ciência do gerente.
     </div>
     <div class="grid g3">${cards}</div>`
 }

@@ -2,8 +2,8 @@ import { state, DEFAULT_FORMS, DEFAULT_TOLERANCIAS, clone, uid, activeForms } fr
 import { money, parseMoney, esc, norm, toast } from './ui.js'
 import { saveConfigCloud, syncFromCloud, loadGerentes, saveOperador, deleteOperador, setOperadorSenha, criarGerente, removerGerente } from './supabase.js'
 
-// SQL da Fase 2 (aprovação de gerente por PIN). Copiável na seção Gerentes.
-export const SQL_GERENTES = `-- APROVAÇÃO DE GERENTE POR PIN — verificação segura sem service_role no frontend.
+// SQL da Fase 2 (ciência do gerente por PIN). Copiável na seção Gerentes.
+export const SQL_GERENTES = `-- CIÊNCIA DO GERENTE POR PIN — verificação segura sem service_role no frontend.
 -- O PIN é validado dentro do Postgres (função SECURITY DEFINER + pgcrypto/bcrypt).
 -- O hash nunca é lido pelo cliente. Cole no SQL Editor do Supabase e execute.
 
