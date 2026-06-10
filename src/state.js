@@ -17,7 +17,7 @@ export const STEPS = [
   ['App Meu Caixa','Abra o app no celular antes de continuar.'],
   ['Maquininha','Aguarde a foto e confirme os valores.'],
   ['Dinheiro','Digite os valores da gaveta.'],
-  ['Sangria / Troco','Procure no TOTVS.'],
+  ['Sangrias & Troco','Revise as sangrias capturadas e informe o troco do TOTVS.'],
   ['Lançar TOTVS','Copie os valores finais.'],
   ['Resultado','Informe se houve diferença.'],
   ['Salvar','Revise e salve.']
@@ -33,7 +33,12 @@ export const state = {
   current: null,
   photoFile: null,
   photoPollInterval: null,
-  currentPedidoId: null
+  currentPedidoId: null,
+  sangriasTurno: [],
+  sangriasTurnoLoaded: false,
+  sangriasTurnoLoading: false,
+  cancelamentosTurno: [],
+  sangriaTipoChanges: {}
 }
 
 export function uid(p = 'id') {
@@ -88,6 +93,11 @@ export function newClosure() {
     ocrIncerto: [],
     criado_em: new Date().toISOString()
   }
+  state.sangriasTurno = []
+  state.sangriasTurnoLoaded = false
+  state.sangriasTurnoLoading = false
+  state.cancelamentosTurno = []
+  state.sangriaTipoChanges = {}
   hydrate()
   updateDraftBadge()
   return state.current

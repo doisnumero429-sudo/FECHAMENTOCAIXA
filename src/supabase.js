@@ -189,3 +189,87 @@ export async function cancelPedidoFoto(pedidoId) {
   if (!state.sb || !pedidoId) return
   await state.sb.from('caixa_pedidos_foto').update({ status: 'cancelado' }).eq('id', pedidoId)
 }
+
+// ─── Sangrias e cancelamentos do turno ───────────────────────────────────────
+
+export async function loadSangriasTurno(dataMovimento) {
+  if (!state.sb || !dataMovimento) return []
+  const { data, error } = await state.sb
+    .from('caixa_sangrias')
+    .select('*')
+    .eq('data_turno', dataMovimento)
+    .eq('confirmado', false)
+    .order('data_hora', { ascending: true })
+  if (error) return []
+  return data || []
+}
+
+export async function loadCancelamentosTurno(dataMovimento) {
+  if (!state.sb || !dataMovimento) return []
+  const { data, error } = await state.sb
+    .from('caixa_cancelamentos')
+    .select('*')
+    .eq('data_turno', dataMovimento)
+    .order('data_hora', { ascending: true })
+  if (error) return []
+  return data || []
+}
+
+export async function confirmSangrias(sangrias, fechamentoId, tipoChanges = {}) {
+  if (!state.sb || !sangrias.length) return
+  const ids = sangrias.map(s => s.id)
+  await state.sb
+    .from('caixa_sangrias')
+    .update({ confirmado: true, fechamento_id: fechamentoId })
+    .in('id', ids)
+  const changed = sangrias.filter(s => tipoChanges[s.id] && tipoChanges[s.id] !== s.tipo)
+  for (const s of changed) {
+    await state.sb.from('caixa_sangrias').update({ tipo: tipoChanges[s.id] }).eq('id', s.id)
+  }
+}
+
+export async function saveFechamentoResumo(current, sangriasTurno, cancelamentosTurno, tipoChanges = {}) {
+  if (!state.sb) return
+  const effective = (s) => tipoChanges[s.id] || s.tipo || 'outro'
+  const byTipo = (t) => sangriasTurno
+    .filter(s => effective(s) === t)
+    .reduce((sum, s) => sum + Number(s.valor || 0), 0)
+  const pVal = (formId) => {
+    const p = (current.pagamentos || []).find(x => x.formId === formId)
+    return Number(p?.confirmedValue || 0)
+  }
+  const knownIds = ['credito', 'debito', 'pix', 'voucher', 'assinadas', 'ifood']
+  const outras = (current.pagamentos || [])
+    .filter(p => !knownIds.includes(p.formId))
+    .reduce((sum, p) => sum + Number(p.confirmedValue || 0), 0)
+  const totalEl = (current.pagamentos || []).reduce((sum, p) => sum + Number(p.confirmedValue || 0), 0)
+  const sangTotal = sangriasTurno.reduce((sum, s) => sum + Number(s.valor || 0), 0)
+  await state.sb.from('caixa_fechamento_resumo').upsert({
+    fechamento_id: current.id,
+    data_turno: current.data,
+    turno: current.turno,
+    operador: current.operador,
+    terminal: current.terminal || 'CAIXA',
+    abertura: current.abertura || 0,
+    dinheiro_contado: current.dinheiroContado || 0,
+    dinheiro_totvs: current.dinheiroTotvs || 0,
+    troco_final: current.trocoFinal || 0,
+    credito: pVal('credito'),
+    debito: pVal('debito'),
+    pix: pVal('pix'),
+    voucher: pVal('voucher'),
+    assinadas: pVal('assinadas'),
+    ifood: pVal('ifood'),
+    outras_formas: outras,
+    total_eletronico: totalEl,
+    sangrias_musico: byTipo('musico'),
+    sangrias_extra: byTipo('extra'),
+    sangrias_vale: byTipo('vale'),
+    sangrias_cofre: byTipo('cofre'),
+    sangrias_outro: byTipo('outro'),
+    sangrias_total: sangTotal,
+    cancelamentos_qtde: cancelamentosTurno.length,
+    cancelamentos_valor: cancelamentosTurno.reduce((sum, c) => sum + Number(c.valor || 0), 0),
+    houve_diferenca: current.houveDiferenca || false
+  }, { onConflict: 'fechamento_id' })
+}

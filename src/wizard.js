@@ -3,7 +3,7 @@ import { money, parseMoney, moneyInput, esc, norm, toast, attachMoneyListeners, 
 import { startPhotoRequest, stopPhotoRequest, handleFallbackUpload, handleManualAdvance, requestAnotherPhoto } from './photo-request.js'
 import { retryOcr, applyJson, applyOcrText } from './ocr.js'
 import { saveLearnedAssociation } from './ai-ocr.js'
-import { uploadPhoto, saveClosure, loadCloudClosures } from './supabase.js'
+import { uploadPhoto, saveClosure, loadCloudClosures, loadSangriasTurno, loadCancelamentosTurno, confirmSangrias, saveFechamentoResumo } from './supabase.js'
 
 export function render() {
   hydrate()
@@ -72,6 +72,7 @@ export function startNew() {
 
 function validate(s) {
   if (s === 1) {
+    const prevData = state.current.data
     state.current.operador = document.getElementById('operador').value
     state.current.turno = document.getElementById('turno').value
     state.current.data = document.getElementById('dataMov').value
@@ -80,6 +81,13 @@ function validate(s) {
     if (!state.current.operador) return toast('Selecione o operador.'), false
     if (!state.current.turno) return toast('Selecione o turno.'), false
     if (!state.current.data) return toast('Informe a data.'), false
+    if (state.current.data !== prevData) {
+      state.sangriasTurnoLoaded = false
+      state.sangriasTurnoLoading = false
+      state.sangriasTurno = []
+      state.cancelamentosTurno = []
+      state.sangriaTipoChanges = {}
+    }
     compareOpening()
   }
   if (s === 3) {
@@ -132,6 +140,16 @@ export async function finish() {
   try {
     await saveClosure(state.current, fotoUrl)
     toast('Fechamento salvo.')
+
+    // Confirmar sangrias e gravar resumo (não-críticos — erros não bloqueiam o fluxo)
+    const snapId = state.current.id
+    const snapCurrent = { ...state.current }
+    const snapSangrias = [...state.sangriasTurno]
+    const snapCancelamentos = [...state.cancelamentosTurno]
+    const snapTipos = { ...state.sangriaTipoChanges }
+    try { if (snapSangrias.length) await confirmSangrias(snapSangrias, snapId, snapTipos) } catch (_) {}
+    try { await saveFechamentoResumo(snapCurrent, snapSangrias, snapCancelamentos, snapTipos) } catch (_) {}
+
     await loadCloudClosures()
     const { renderClosures } = window.__history || {}
     renderClosures && renderClosures()
@@ -495,23 +513,118 @@ export function clearCash() {
   if (confirm('Limpar valores de dinheiro?')) { state.current.cash = []; calc(); render() }
 }
 
-// ─── Etapa 5 — Sangria Troco ─────────────────────────────────────────────────
+// ─── Etapa 5 — Sangrias & Troco ──────────────────────────────────────────────
+
+export function changeSangriaTipo(id, tipo) {
+  state.sangriaTipoChanges[id] = tipo
+}
 
 function stepSangria() {
   calc()
+
+  if (!state.sangriasTurnoLoaded && !state.sangriasTurnoLoading && state.current.data) {
+    state.sangriasTurnoLoading = true
+    Promise.all([
+      loadSangriasTurno(state.current.data),
+      loadCancelamentosTurno(state.current.data)
+    ]).then(([sangrias, cancelamentos]) => {
+      if (state.step !== 5) return
+      state.sangriasTurno = sangrias || []
+      state.cancelamentosTurno = cancelamentos || []
+      state.sangriasTurnoLoaded = true
+      state.sangriasTurnoLoading = false
+      render()
+    }).catch(() => {
+      state.sangriasTurnoLoaded = true
+      state.sangriasTurnoLoading = false
+    })
+    return `<div class="alert blue"><b>Buscando sangrias e cancelamentos do turno...</b></div>${footer()}`
+  }
+
+  const sangrias = state.sangriasTurno
+  const cancelamentos = state.cancelamentosTurno
+  const tipoOptions = [
+    ['musico','Músico / Banda'],['extra','Extra / Freelancer'],
+    ['vale','Vale (adiantamento)'],['cofre','Cofre (dono)'],['outro','Outro']
+  ]
+  const totalSangrias = sangrias.reduce((s, x) => s + Number(x.valor || 0), 0)
+  const totalCancel = cancelamentos.reduce((s, x) => s + Number(x.valor || 0), 0)
+
+  const sangriasPanel = sangrias.length
+    ? `<div style="margin-bottom:14px">
+         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+           <b>Sangrias capturadas pela impressora</b>
+           <span class="chip chipblue">${sangrias.length} · ${money(totalSangrias)}</span>
+         </div>
+         <div class="table">
+           <table>
+             <thead><tr><th>Hora</th><th>Motivo</th><th class="num">Valor</th><th>Tipo</th></tr></thead>
+             <tbody>${sangrias.map(s => {
+               const hora = s.data_hora ? s.data_hora.slice(11, 16) : '—'
+               const cur = state.sangriaTipoChanges[s.id] || s.tipo || 'outro'
+               const opts = tipoOptions.map(([v, l]) =>
+                 `<option value="${v}"${cur === v ? ' selected' : ''}>${l}</option>`).join('')
+               return `<tr>
+                 <td>${esc(hora)}</td>
+                 <td>${esc(s.motivo || '—')}</td>
+                 <td class="num">${money(s.valor)}</td>
+                 <td><select style="font-size:12px;border-radius:8px;padding:4px 8px;border:1px solid #d1d5db"
+                   onchange="window.__wizard.changeSangriaTipo('${s.id}',this.value)">${opts}</select></td>
+               </tr>`
+             }).join('')}</tbody>
+           </table>
+         </div>
+         <div class="summary" style="margin-top:10px">
+           <small>Total capturado pelo agente</small>
+           <strong>${money(totalSangrias)}</strong>
+         </div>
+       </div>`
+    : `<div class="alert blue" style="margin-bottom:14px">
+         Nenhuma sangria capturada pelo agente para <b>${esc(state.current.data)}</b>.
+         Se houve sangrias, use o campo ao lado.
+       </div>`
+
+  const cancelPanel = cancelamentos.length
+    ? `<details style="margin-top:6px">
+         <summary style="cursor:pointer;font-weight:800;font-size:13px;padding:8px 0">
+           Cancelamentos do turno — ${cancelamentos.length} · ${money(totalCancel)}
+         </summary>
+         <div class="table" style="margin-top:10px">
+           <table>
+             <thead><tr><th>Hora</th><th>Produto</th><th>Motivo</th><th class="num">Valor</th></tr></thead>
+             <tbody>${cancelamentos.map(c => {
+               const hora = c.data_hora ? c.data_hora.slice(11, 16) : '—'
+               return `<tr>
+                 <td>${esc(hora)}</td>
+                 <td>${esc(c.produto || '—')}</td>
+                 <td>${esc(c.motivo || '—')}</td>
+                 <td class="num">${money(c.valor)}</td>
+               </tr>`
+             }).join('')}</tbody>
+           </table>
+         </div>
+       </details>`
+    : `<div class="hint" style="margin-top:8px">Nenhum cancelamento neste turno.</div>`
+
   return `
-    <div class="alert warn">
-      <b>Agora vá no fechamento do caixa no TOTVS.</b><br>
-      Aperte <b>CTRL + F</b> e procure <b>"SANGRIA TROCO"</b>. Se aparecer, informe o valor aqui. Se não aparecer, deixe R$ 0,00.
-    </div>
     <div class="grid g2">
-      <div class="field"><label>Sangria troco informada pelo TOTVS</label>
-        <input id="sangria" class="brl money" inputmode="decimal"
-          value="${state.current.sangriaTroco ? money(state.current.sangriaTroco) : ''}" placeholder="R$ 0,00">
+      <div>
+        ${sangriasPanel}
+        ${cancelPanel}
       </div>
-      <div class="summary"><small>Dinheiro contado na gaveta</small><strong>${money(state.current.dinheiroContado)}</strong></div>
+      <div>
+        <div class="alert warn">
+          <b>Vá ao TOTVS e procure "SANGRIA TROCO".</b><br>
+          Use <b>CTRL + F</b> na fita de fechamento. Se não aparecer, deixe R$ 0,00.
+        </div>
+        <div class="field"><label>Sangria Troco informada pelo TOTVS</label>
+          <input id="sangria" class="brl money" inputmode="decimal"
+            value="${state.current.sangriaTroco ? money(state.current.sangriaTroco) : ''}" placeholder="R$ 0,00">
+        </div>
+        <div class="summary"><small>Dinheiro contado na gaveta</small><strong>${money(state.current.dinheiroContado)}</strong></div>
+        <div class="hint">O valor de dinheiro para lançar no TOTVS aparece na próxima etapa.</div>
+      </div>
     </div>
-    <div class="hint">O valor de dinheiro para lançar no TOTVS só aparece na próxima etapa.</div>
     ${footer()}`
 }
 

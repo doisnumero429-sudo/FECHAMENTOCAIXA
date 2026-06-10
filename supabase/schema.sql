@@ -327,3 +327,71 @@ do $$ begin create policy cancel_select on public.caixa_cancelamentos for select
 do $$ begin create policy cancel_insert on public.caixa_cancelamentos for insert with check (true); exception when duplicate_object then null; end $$;
 do $$ begin create policy cancel_update on public.caixa_cancelamentos for update using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
 do $$ begin create policy cancel_delete on public.caixa_cancelamentos for delete using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
+
+-- ─── Colunas de linkage ao fechamento (v3) ──────────────────────────────────
+-- Adicionadas para que o wizard possa confirmar sangrias e registrar o resumo.
+
+alter table public.caixa_sangrias add column if not exists fechamento_id text;
+alter table public.caixa_cancelamentos add column if not exists fechamento_id text;
+
+-- ─── Resumo de fechamento — base para o dashboard ───────────────────────────
+-- Uma linha por fechamento. Alimentada pelo wizard ao salvar.
+-- Permite queries analíticas sem JOINs complexos.
+
+create table if not exists public.caixa_fechamento_resumo (
+  fechamento_id text primary key references public.caixa_fechamentos(id),
+  data_turno date not null,
+  turno text,
+  operador text,
+  terminal text not null default 'CAIXA',
+
+  -- Dinheiro (gaveta)
+  abertura numeric(12,2) not null default 0,
+  dinheiro_contado numeric(12,2) not null default 0,
+  dinheiro_totvs numeric(12,2) not null default 0,
+  troco_final numeric(12,2) not null default 0,
+
+  -- Formas de pagamento confirmadas na maquininha
+  credito numeric(12,2) not null default 0,
+  debito numeric(12,2) not null default 0,
+  pix numeric(12,2) not null default 0,
+  voucher numeric(12,2) not null default 0,
+  assinadas numeric(12,2) not null default 0,
+  ifood numeric(12,2) not null default 0,
+  outras_formas numeric(12,2) not null default 0,
+  total_eletronico numeric(12,2) not null default 0,
+
+  -- Sangrias classificadas e confirmadas no fechamento
+  -- musico = músico/banda  |  extra = freelancer  |  vale = adiantamento salário
+  -- cofre  = retirada pelo dono
+  sangrias_musico numeric(12,2) not null default 0,
+  sangrias_extra numeric(12,2) not null default 0,
+  sangrias_vale numeric(12,2) not null default 0,
+  sangrias_cofre numeric(12,2) not null default 0,
+  sangrias_outro numeric(12,2) not null default 0,
+  sangrias_total numeric(12,2) not null default 0,
+
+  -- Cancelamentos do turno (informativos)
+  cancelamentos_qtde integer not null default 0,
+  cancelamentos_valor numeric(12,2) not null default 0,
+
+  houve_diferenca boolean not null default false,
+  criado_em timestamptz not null default now()
+);
+
+create index if not exists idx_resumo_data_turno
+  on public.caixa_fechamento_resumo(data_turno desc);
+create index if not exists idx_resumo_terminal_data
+  on public.caixa_fechamento_resumo(terminal, data_turno desc);
+create index if not exists idx_resumo_turno
+  on public.caixa_fechamento_resumo(turno, data_turno desc);
+
+alter table public.caixa_fechamento_resumo enable row level security;
+
+-- Leitura aberta (dashboard e PWA)
+do $$ begin create policy resumo_select on public.caixa_fechamento_resumo for select using (true); exception when duplicate_object then null; end $$;
+-- Inserção e atualização abertas (wizard usa anon key ao upsert)
+do $$ begin create policy resumo_insert on public.caixa_fechamento_resumo for insert with check (true); exception when duplicate_object then null; end $$;
+do $$ begin create policy resumo_update on public.caixa_fechamento_resumo for update using (true); exception when duplicate_object then null; end $$;
+-- Exclusão bloqueada para anon
+do $$ begin create policy resumo_delete on public.caixa_fechamento_resumo for delete using (auth.jwt()->>'role' = 'service_role'); exception when duplicate_object then null; end $$;
