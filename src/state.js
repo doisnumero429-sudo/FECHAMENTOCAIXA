@@ -38,7 +38,10 @@ export const state = {
   sangriasTurnoLoaded: false,
   sangriasTurnoLoading: false,
   cancelamentosTurno: [],
-  sangriaTipoChanges: {}
+  sangriaTipoChanges: {},
+  nfceTurno: [],
+  nfceTurnoLoaded: false,
+  nfceTurnoLoading: false
 }
 
 export function uid(p = 'id') {
@@ -101,6 +104,9 @@ export function newClosure() {
   state.sangriasTurnoLoading = false
   state.cancelamentosTurno = []
   state.sangriaTipoChanges = {}
+  state.nfceTurno = []
+  state.nfceTurnoLoaded = false
+  state.nfceTurnoLoading = false
   hydrate()
   updateDraftBadge()
   return state.current

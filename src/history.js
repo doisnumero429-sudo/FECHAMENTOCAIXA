@@ -55,7 +55,8 @@ export function renderClosures() {
     return prev != null ? Number(prev.trocoFinal) : null
   }
 
-  box.innerHTML = list.map(c => buildCard(c, getPrevTroco(c))).join('')
+  const sep = '<div style="height:2px;background:linear-gradient(to right,transparent,var(--line) 20%,var(--line) 80%,transparent);margin:6px 0;opacity:.6"></div>'
+  box.innerHTML = list.map(c => buildCard(c, getPrevTroco(c))).join(sep)
   requestAnimationFrame(() => window.__refreshIcons?.())
 }
 

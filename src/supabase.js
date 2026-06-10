@@ -192,6 +192,15 @@ export async function cancelPedidoFoto(pedidoId) {
 
 // ─── Sangrias e cancelamentos do turno ───────────────────────────────────────
 
+export async function loadNfceTurno(dataMovimento) {
+  if (!state.sb || !dataMovimento) return []
+  const { data } = await state.sb
+    .from('caixa_nfce_eventos')
+    .select('forma_pagamento, valor_total')
+    .eq('data_turno', dataMovimento)
+  return data || []
+}
+
 export async function loadSangriasTurno(dataMovimento) {
   if (!state.sb || !dataMovimento) return []
   const { data, error } = await state.sb
@@ -228,8 +237,7 @@ export async function confirmSangrias(sangrias, fechamentoId, tipoChanges = {}) 
   }
 }
 
-export async function saveFechamentoResumo(current, sangriasTurno, cancelamentosTurno, tipoChanges = {}) {
-  if (!state.sb) return
+export async function saveFechamentoResumo(current, sangriasTurno, cancelamentosTurno, tipoChanges = {}) {  if (!state.sb) return
   const effective = (s) => tipoChanges[s.id] || s.tipo || 'outro'
   const byTipo = (t) => sangriasTurno
     .filter(s => effective(s) === t)

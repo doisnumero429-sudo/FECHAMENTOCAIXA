@@ -3,7 +3,7 @@ import { money, parseMoney, moneyInput, esc, norm, toast, attachMoneyListeners, 
 import { startPhotoRequest, stopPhotoRequest, handleFallbackUpload, handleManualAdvance, requestAnotherPhoto } from './photo-request.js'
 import { retryOcr, applyJson, applyOcrText } from './ocr.js'
 import { saveLearnedAssociation } from './ai-ocr.js'
-import { uploadPhoto, saveClosure, loadCloudClosures, loadSangriasTurno, loadCancelamentosTurno, confirmSangrias, saveFechamentoResumo } from './supabase.js'
+import { uploadPhoto, saveClosure, loadCloudClosures, loadSangriasTurno, loadCancelamentosTurno, confirmSangrias, saveFechamentoResumo, loadNfceTurno } from './supabase.js'
 
 export function render() {
   hydrate()
@@ -87,6 +87,9 @@ function validate(s) {
       state.sangriasTurno = []
       state.cancelamentosTurno = []
       state.sangriaTipoChanges = {}
+      state.nfceTurnoLoaded = false
+      state.nfceTurnoLoading = false
+      state.nfceTurno = []
     }
     compareOpening()
   }
@@ -673,31 +676,174 @@ export function copyAll() {
   toast('Resumo copiado.')
 }
 
-// ─── Etapa 7 — Resultado ─────────────────────────────────────────────────────
+// ─── Etapa 7 — Resultado & Conciliação ───────────────────────────────────────
+
+function _gerarInsights(comp, totalDiff, nfceTotal, nfceCount) {
+  const ins = []
+  const get = id => comp.find(c => c.id === id) || { diff: 0 }
+  const credD = get('credito').diff, debD = get('debito').diff, pixD = get('pix').diff
+  const abs = Math.abs
+
+  // Troca crédito ↔ débito: diferenças opostas que se anulam, total fechado
+  if (abs(credD) > 0.5 && abs(debD) > 0.5 && abs(credD + debD) < 1 && abs(totalDiff) < 5) {
+    ins.push({ nivel: 'warn', emoji: '🔄',
+      titulo: 'Provável troca de Crédito e Débito',
+      texto: `Diferença de ${money(abs(credD))} em sentidos opostos — o total fecha. Isso é comum quando o atendente fecha uma mesa no TOTVS como <b>Crédito</b> sendo que o cliente pagou com <b>Débito</b> (ou vice-versa). Não afeta o caixa, mas entra errado nos relatórios.` })
+    return ins
+  }
+
+  // PIX não registrado
+  if (pixD > 10 && abs(totalDiff) > 5)
+    ins.push({ nivel: 'warn', emoji: '📱',
+      titulo: 'Possível PIX não registrado no TOTVS',
+      texto: `O agente capturou ${money(abs(pixD))} a mais em PIX do que o informado. Um pagamento PIX pode ter sido recebido no celular mas não lançado no TOTVS.` })
+
+  // Total menor do que capturado — mesa sumiu
+  if (totalDiff > 20)
+    ins.push({ nivel: 'warn', emoji: '🔍',
+      titulo: 'Agente capturou mais do que o informado',
+      texto: `Diferença de ${money(totalDiff)}. Possíveis causas: mesa que consumiu mas saiu sem o TOTVS fechar a conta, cancelamento feito no sistema sem cancelar o cupom, ou NFC-e de um turno anterior incluído nesta data.` })
+
+  // Total maior do que capturado — lançamento duplicado
+  if (totalDiff < -20)
+    ins.push({ nivel: 'warn', emoji: '⚠️',
+      titulo: 'Valor informado acima do capturado',
+      texto: `Diferença de ${money(abs(totalDiff))}. Verifique se alguma forma de pagamento foi lançada em duplicidade, ou se um valor foi arredondado para cima ao informar no TOTVS.` })
+
+  // Tudo confere
+  if (!ins.length && abs(totalDiff) < 5)
+    ins.push({ nivel: 'ok', emoji: '✅',
+      titulo: 'Valores conferem com os NFC-e capturados',
+      texto: `Os ${nfceCount} cupons fiscais capturados totalizam ${money(nfceTotal)} — dentro da margem do que foi informado no fechamento.` })
+
+  return ins
+}
 
 function stepResult() {
   calc()
-  return `
-    <div class="alert blue">A fita de fechamento informou diferença? Se sim, apenas explique em texto livre.</div>
-    <div class="grid g2">
-      <div class="payment">
-        <label style="font-weight:900">O TOTVS informou diferença?</label><br><br>
-        <label><input type="radio" name="dif" value="nao" ${!state.current.houveDiferenca ? 'checked' : ''}
-          onchange="window.__wizard.toggleDif()"> Não, bateu tudo</label><br><br>
-        <label><input type="radio" name="dif" value="sim" ${state.current.houveDiferenca ? 'checked' : ''}
-          onchange="window.__wizard.toggleDif()"> Sim, teve diferença</label>
-        <div id="difArea" class="${state.current.houveDiferenca ? '' : 'hidden'}" style="margin-top:14px">
-          <div class="field"><label>Explique a diferença</label>
-            <textarea id="obsDif" placeholder="Explique o que apareceu na fita, o que foi recontado e qual foi a conclusão.">${esc(state.current.obsDiferenca || '')}</textarea>
-          </div>
-        </div>
+
+  // Carrega NFC-e na primeira entrada na etapa
+  if (!state.nfceTurnoLoaded && !state.nfceTurnoLoading && state.current.data) {
+    state.nfceTurnoLoading = true
+    loadNfceTurno(state.current.data).then(rows => {
+      if (state.step !== 7) return
+      state.nfceTurno = rows || []
+      state.nfceTurnoLoaded = true
+      state.nfceTurnoLoading = false
+      render()
+    }).catch(() => { state.nfceTurnoLoaded = true; state.nfceTurnoLoading = false })
+    return `<div class="alert blue"><b>Calculando conciliação do turno...</b></div>${footer()}`
+  }
+
+  // Agrega NFC-e por forma de pagamento
+  const agg = {}
+  for (const ev of state.nfceTurno) {
+    const k = ev.forma_pagamento || 'outros'
+    agg[k] = (agg[k] || 0) + Number(ev.valor_total || 0)
+  }
+  const nfceTotal = Object.values(agg).reduce((s, v) => s + v, 0)
+  const nfceCount = state.nfceTurno.length
+
+  // Valores informados no wizard (maquininha + dinheiro)
+  const wizPays = state.current.pagamentos.filter(p => Number(p.confirmedValue || 0) > 0)
+  const wizMaqTotal = wizPays.reduce((s, p) => s + Number(p.confirmedValue || 0), 0)
+  const wizTotal = wizMaqTotal + Number(state.current.dinheiroTotvs || 0)
+  const totalDiff = nfceTotal - wizTotal
+
+  // Comparação por forma (apenas formas com correspondência direta no NFC-e)
+  const formas = [
+    { id: 'credito', label: 'Crédito' },
+    { id: 'debito',  label: 'Débito'  },
+    { id: 'pix',     label: 'PIX'     },
+  ]
+  const comp = formas.map(({ id, label }) => {
+    const wiz = state.current.pagamentos.find(p => p.formId === id)
+    const wizVal = Number(wiz?.confirmedValue || 0)
+    const agentVal = agg[id] || 0
+    return { id, label, wizVal, agentVal, diff: agentVal - wizVal }
+  })
+
+  const insights = _gerarInsights(comp, totalDiff, nfceTotal, nfceCount)
+
+  const diffColor = d => Math.abs(d) < 0.5 ? '#16a34a' : Math.abs(d) < 20 ? '#d97706' : '#dc2626'
+  const diffHtml = d => Math.abs(d) < 0.5
+    ? `<span style="color:#16a34a;font-weight:800">✓</span>`
+    : `<span style="color:${diffColor(d)};font-weight:800">${d > 0 ? '+' : ''}${money(d)}</span>`
+
+  const conciliacaoPanel = nfceCount > 0 ? `
+    <div style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <b>Conciliação com NFC-e do agente</b>
+        <span class="chip chipblue">${nfceCount} cupons · ${money(nfceTotal)}</span>
       </div>
-      <div class="payment">
-        <div class="summary">
+      <div class="table">
+        <table>
+          <thead><tr>
+            <th>Forma</th>
+            <th class="num">Agente (NFC-e)</th>
+            <th class="num">Você informou</th>
+            <th class="num">Diferença</th>
+          </tr></thead>
+          <tbody>
+            ${comp.map(c => `<tr>
+              <td>${esc(c.label)}</td>
+              <td class="num">${money(c.agentVal)}</td>
+              <td class="num">${money(c.wizVal)}</td>
+              <td class="num">${diffHtml(c.diff)}</td>
+            </tr>`).join('')}
+            <tr style="background:linear-gradient(135deg,#eff6ff,#dbeafe)">
+              <td style="color:#1e40af;font-weight:800">Dinheiro</td>
+              <td class="num" style="color:#9ca3af;font-size:12px">—</td>
+              <td class="num" style="color:#1e40af;font-weight:800">${money(state.current.dinheiroTotvs)}</td>
+              <td class="num"><span style="color:#6b7280;font-size:11px">fórmula</span></td>
+            </tr>
+          </tbody>
+          <tfoot><tr style="background:var(--soft)">
+            <td><b>Total</b></td>
+            <td class="num"><b>${money(nfceTotal)}</b></td>
+            <td class="num"><b>${money(wizTotal)}</b></td>
+            <td class="num"><b>${diffHtml(totalDiff)}</b></td>
+          </tr></tfoot>
+        </table>
+      </div>
+      <div class="hint" style="margin-top:6px">NFC-e capturados incluem todos os cupons de ${esc(state.current.data)}. Se houver dois turnos no dia, os valores podem incluir o turno anterior.</div>
+    </div>
+    <div style="display:grid;gap:8px;margin-bottom:16px">
+      ${insights.map(i => `
+        <div class="alert ${i.nivel === 'ok' ? 'ok' : i.nivel === 'bad' ? 'bad' : 'warn'}">
+          <b>${i.emoji} ${esc(i.titulo)}</b><br>
+          <span style="font-size:13px;line-height:1.5">${i.texto}</span>
+        </div>`).join('')}
+    </div>` : `
+    <div class="alert blue" style="margin-bottom:16px">
+      <b>Agente sem NFC-e para ${esc(state.current.data)}.</b>
+      A conciliação automática não está disponível — verifique se o agente está rodando.
+    </div>`
+
+  return `
+    <div class="grid g2">
+      <div>${conciliacaoPanel}</div>
+      <div>
+        <div class="summary" style="margin-bottom:16px">
           <small>Troco final deixado para o próximo caixa</small>
           <strong>${money(state.current.dinheiroContado)}</strong>
         </div>
-        <div class="hint">É o mesmo valor que a pessoa informou ao somar quanto tem na gaveta.</div>
+        <div class="payment">
+          <label style="font-weight:900">A fita do TOTVS confirmou diferença?</label><br><br>
+          <label style="cursor:pointer"><input type="radio" name="dif" value="nao"
+            ${!state.current.houveDiferenca ? 'checked' : ''} onchange="window.__wizard.toggleDif()">
+            Não, bateu tudo</label><br><br>
+          <label style="cursor:pointer"><input type="radio" name="dif" value="sim"
+            ${state.current.houveDiferenca ? 'checked' : ''} onchange="window.__wizard.toggleDif()">
+            Sim, houve diferença</label>
+          <div id="difArea" class="${state.current.houveDiferenca ? '' : 'hidden'}" style="margin-top:14px">
+            <div class="field">
+              <label>Explique a diferença <span style="color:#6b7280;font-weight:400">(aparece na Conferência)</span></label>
+              <textarea id="obsDif" rows="5"
+                placeholder="Descreva o que apareceu na fita do TOTVS, o que foi verificado e a conclusão.">${esc(state.current.obsDiferenca || '')}</textarea>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     ${footer()}`
