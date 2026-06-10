@@ -1,0 +1,89 @@
+============================================================
+  ARACA GRILL - AGENTE CAIXA v7
+  Captura de impressora + envio ao Supabase
+============================================================
+
+
+CONFIGURACAO INICIAL (fazer uma unica vez)
+==========================================
+
+1. INSTALAR PYTHON 3
+   - Acesse: https://python.org/downloads
+   - Baixe a versao mais recente (Python 3.x)
+   - Na instalacao marque obrigatoriamente:
+     [x] Add Python to PATH
+
+2. CRIAR O ARQUIVO DE CONFIGURACAO
+   - Copie o arquivo "config.example.json"
+   - Renomeie a copia para "config_caixa.json"
+   - Abra com o Bloco de Notas (clique direito > Abrir com)
+
+3. PREENCHER O config_caixa.json
+   - "printer_name": nome exato da impressora
+     Dica: execute LISTAR_IMPRESSORAS.bat para ver os nomes.
+     Normalmente sera "CAIXA" ou algo como "Bematech MP-4200 TH"
+
+   - "supabase_url": URL do projeto (ex: https://xxxx.supabase.co)
+   - "supabase_key": chave anon do projeto Supabase
+
+   Os outros campos nao precisam ser alterados.
+
+
+USO DIARIO
+==========
+
+1. Abra a pasta do agente
+2. Clique duas vezes em AGENTE_CAIXA.bat
+3. O Windows vai pedir permissao de Administrador - clique em Sim
+4. Deixe a janela ABERTA durante todo o turno
+5. Para parar: pressione CTRL+C ou feche a janela
+
+
+O QUE O AGENTE FAZ
+==================
+
+- Monitora automaticamente a impressora configurada
+- Captura NFC-e, Sangrias e Cancelamentos em tempo real
+- Envia para o Supabase:
+    * NFC-e         -> caixa_nfce_eventos
+    * Sangrias      -> caixa_sangrias
+    * Cancelamentos -> caixa_cancelamentos
+
+- Salva copia local de tudo em:
+    C:\AracaSpoolGuard\capturas_caixa\TODAS_IMPRESSOES_CAIXA.txt
+
+- Se o Supabase estiver fora do ar, o arquivo local continua
+  funcionando normalmente (sem perda de dados)
+
+
+PROBLEMAS COMUNS
+================
+
+"Python nao encontrado"
+  -> Instale o Python 3 com "Add to PATH" marcado (passo 1)
+
+"config_caixa.json nao encontrado"
+  -> Siga o passo 2 da configuracao inicial
+
+"Impressora nao encontrada"
+  -> Execute LISTAR_IMPRESSORAS.bat e corrija o printer_name
+
+"Supabase FALHOU" nos logs
+  -> Verifique a conexao com a internet
+  -> Confirme supabase_url e supabase_key no config_caixa.json
+  -> Os dados locais continuam sendo salvos normalmente
+
+
+ARQUIVOS DESTA PASTA
+====================
+
+agente.py             - codigo principal do agente
+config_caixa.json     - sua configuracao (criar a partir do example)
+config.example.json   - modelo de configuracao
+AGENTE_CAIXA.bat      - CLIQUE AQUI PARA INICIAR o agente
+LISTAR_IMPRESSORAS.bat - lista impressoras disponiveis no Windows
+LEIA_PRIMEIRO.txt     - este arquivo
+requirements.txt      - dependencias Python (instaladas automaticamente)
+
+
+============================================================
