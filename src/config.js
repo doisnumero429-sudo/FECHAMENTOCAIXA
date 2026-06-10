@@ -1,6 +1,6 @@
 import { state, DEFAULT_FORMS, DEFAULT_TOLERANCIAS, clone, uid, activeForms } from './state.js'
 import { money, parseMoney, esc, norm, toast } from './ui.js'
-import { saveConfigCloud, syncFromCloud, loadGerentes } from './supabase.js'
+import { saveConfigCloud, syncFromCloud, loadGerentes, saveOperador, deleteOperador, setOperadorSenha, criarGerente, removerGerente } from './supabase.js'
 
 // SQL da Fase 2 (aprovação de gerente por PIN). Copiável na seção Gerentes.
 export const SQL_GERENTES = `-- APROVAÇÃO DE GERENTE POR PIN — verificação segura sem service_role no frontend.
@@ -334,22 +334,47 @@ export function renderConfig() {
 
 function renderGerentes() {
   const el = document.getElementById('gerentesList')
-  if (el) {
-    const list = state.gerentes || []
-    el.innerHTML = list.length
-      ? list.map(g => `<div class="config" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-          <div><b>${esc(g.nome)}</b> <span style="color:#9ca3af;font-size:12px">(${esc(g.id)})</span></div>
+  if (!el) return
+  const list = state.gerentes || []
+  el.innerHTML = list.length
+    ? list.map(g => `<div class="config" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div><b>${esc(g.nome)}</b> <span style="color:#9ca3af;font-size:12px">(${esc(g.id)})</span></div>
+        <div style="display:flex;align-items:center;gap:8px">
           <span class="chip chipblue">🔐 PIN protegido</span>
-        </div>`).join('')
-      : '<div class="hint">Nenhum gerente cadastrado. Use o SQL abaixo (o PIN fica protegido por bcrypt no banco — o app nunca lê o hash).</div>'
-  }
-  const sqlBox = document.getElementById('gerentesSqlBox')
-  if (sqlBox) sqlBox.value = SQL_GERENTES
+          <button class="btn danger small" onclick="window.__config.removerGerenteUI('${esc(g.id)}')">Remover</button>
+        </div>
+      </div>`).join('')
+    : '<div class="hint">Nenhum gerente cadastrado. Use o formulário abaixo para criar.</div>'
 }
 
-export function copyGerentesSql() {
-  navigator.clipboard?.writeText(SQL_GERENTES)
-  toast('SQL de gerentes copiado.')
+export async function addGerente() {
+  const nome = document.getElementById('newGerenteName')?.value.trim()
+  const pin = document.getElementById('newGerentePin')?.value.trim()
+  const pin2 = document.getElementById('newGerentePinConfirm')?.value.trim()
+  if (!nome) return toast('Informe o nome do gerente.')
+  if (!pin || pin.length < 4) return toast('PIN deve ter no mínimo 4 dígitos.')
+  if (pin !== pin2) return toast('Os PINs não coincidem.')
+  const id = norm(nome) || uid('gerente')
+  const res = await criarGerente(id, nome, pin)
+  if (!res?.ok) return toast('Erro ao criar gerente: ' + (res?.erro || 'desconhecido'))
+  const el = document.getElementById('newGerenteName'); if (el) el.value = ''
+  const pe = document.getElementById('newGerentePin'); if (pe) pe.value = ''
+  const pe2 = document.getElementById('newGerentePinConfirm'); if (pe2) pe2.value = ''
+  await loadGerentes()
+  renderGerentes()
+  updateConfigCounters()
+  toast(`Gerente "${nome}" criado com sucesso.`)
+}
+
+export async function removerGerenteUI(id) {
+  const g = (state.gerentes || []).find(x => x.id === id)
+  if (!confirm(`Remover gerente "${g?.nome || id}"?`)) return
+  const res = await removerGerente(id)
+  if (!res?.ok) return toast('Erro ao remover: ' + (res?.erro || 'desconhecido'))
+  await loadGerentes()
+  renderGerentes()
+  updateConfigCounters()
+  toast('Gerente removido.')
 }
 
 export async function refreshGerentes() {
@@ -444,11 +469,12 @@ export function resetTolerancias() {
 function renderList(id, list, kind) {
   const el = document.getElementById(id)
   if (!el) return
+  const isOp = kind === 'operator'
   el.innerHTML = list.slice().sort((a, b) => (a.ordem || 999) - (b.ordem || 999)).map(x =>
     `<div class="config">
       <div class="grid g3">
         <div class="field">
-          <label>${kind === 'operator' ? 'Operador' : 'Turno'}</label>
+          <label>${isOp ? 'Operador' : 'Turno'}</label>
           <input value="${esc(x.nome)}" onchange="window.__config.updSimple('${kind}','${x.id}','nome',this.value)">
         </div>
         <label style="align-self:end">
@@ -460,8 +486,27 @@ function renderList(id, list, kind) {
           <button class="btn danger small" onclick="window.__config.removeSimple('${kind}','${x.id}')">Remover</button>
         </div>
       </div>
+      ${isOp ? `<div class="grid g2" style="margin-top:8px">
+        <div class="field">
+          <label>Senha do operador</label>
+          <input type="password" id="senha_op_${x.id}" placeholder="Definir nova senha…" autocomplete="new-password">
+        </div>
+        <div class="btns" style="align-self:end">
+          <button class="btn light small" onclick="window.__config.definirSenha('${x.id}')">🔑 Definir senha</button>
+        </div>
+      </div>` : ''}
     </div>`
   ).join('')
+}
+
+export async function definirSenha(id) {
+  const inp = document.getElementById(`senha_op_${id}`)
+  const senha = inp?.value?.trim()
+  if (!senha) return toast('Digite uma senha antes de confirmar.')
+  const res = await setOperadorSenha(id, senha)
+  if (!res?.ok) return toast('Erro ao definir senha: ' + (res?.erro || 'desconhecido'))
+  if (inp) inp.value = ''
+  toast('Senha definida com sucesso.')
 }
 
 function renderForms() {
@@ -524,7 +569,9 @@ function setList(kind, l) { if (kind === 'operator') state.operators = l; else s
 
 export function updSimple(k, id, f, v) {
   const x = listFor(k).find(i => i.id === id)
-  if (x) x[f] = v
+  if (!x) return
+  x[f] = v
+  if (k === 'operator') saveOperador(x)
   renderConfig()
   const { render } = window.__appRender || {}
   render && render()
@@ -537,6 +584,7 @@ export function moveSimple(k, id, dir) {
   ;[l[i], l[j]] = [l[j], l[i]]
   l.forEach((x, idx) => x.ordem = idx + 1)
   setList(k, l)
+  if (k === 'operator') { saveOperador(l[i]); saveOperador(l[j]) }
   renderConfig()
   const { render } = window.__appRender || {}
   render && render()
@@ -544,18 +592,21 @@ export function moveSimple(k, id, dir) {
 
 export function removeSimple(k, id) {
   if (!confirm('Remover? Você também pode só desativar.')) return
+  if (k === 'operator') deleteOperador(id)
   setList(k, listFor(k).filter(x => x.id !== id))
   renderConfig()
   const { render } = window.__appRender || {}
   render && render()
 }
 
-export function addOperator() {
+export async function addOperator() {
   const el = document.getElementById('newOperator')
   const nome = el.value.trim()
   if (!nome) return toast('Informe o operador.')
-  state.operators.push({ id: norm(nome) || uid('op'), nome, ativo: true, ordem: state.operators.length + 1 })
+  const op = { id: norm(nome) || uid('op'), nome, ativo: true, ordem: state.operators.length + 1 }
+  state.operators.push(op)
   el.value = ''
+  await saveOperador(op)
   renderConfig()
   const { render } = window.__appRender || {}
   render && render()

@@ -5,7 +5,7 @@ import { state, loadDefaults, activeForms, activeOps, activeShifts, hydrate } fr
 import { closePhotoModal, photoModalBackdrop, toast } from './ui.js'
 import { initSupabase, syncFromCloud, loadCloudClosures, loadGerentes } from './supabase.js'
 import { render, next, prev, startNew, finish, confirmDivAbertura, syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI, addCash, removeCash, clearCash, copy, copyAll, toggleDif, addPhoto, associarIncerto, changeSangriaTipo, changeCancelamentoMotivo, changeCancelamentoClass, changeDigitacaoTotvs, autofillExplicacao, autofillCompensacao, enviarAprovacao, limparAprovacao } from './wizard.js'
-import { renderConfig, updateConfigCounters, updSimple, moveSimple, removeSimple, addOperator, addShift, updForm, updAliases, moveForm, removeForm, addForm, resetForms, toggleConfigSections, copySql, saveConfig, updTolerancia, addTolerancia, removeTolerancia, resetTolerancias, copyGerentesSql, refreshGerentes } from './config.js'
+import { renderConfig, updateConfigCounters, updSimple, moveSimple, removeSimple, addOperator, addShift, updForm, updAliases, moveForm, removeForm, addForm, resetForms, toggleConfigSections, copySql, saveConfig, updTolerancia, addTolerancia, removeTolerancia, resetTolerancias, refreshGerentes, addGerente, removerGerenteUI, definirSenha } from './config.js'
 import { renderClosures, openPhoto, refreshClosures, copyJson } from './history.js'
 import { renderDashboard, setDashView, applyDashRange, dashboardResize } from './dashboard.js'
 import { retryOcr } from './ocr.js'
@@ -38,7 +38,7 @@ window.__config = {
   updForm, updAliases, moveForm, removeForm, addForm, resetForms,
   toggleConfigSections, copySql, saveConfig,
   updTolerancia, addTolerancia, removeTolerancia, resetTolerancias,
-  copyGerentesSql, refreshGerentes
+  refreshGerentes, addGerente, removerGerenteUI, definirSenha
 }
 window.__history = { renderClosures, openPhoto, refreshClosures, copyJson }
 window.__dashboard = { renderDashboard, setView: setDashView, apply: applyDashRange }

@@ -378,6 +378,48 @@ export async function loadDashboardData(dataIni, dataFim) {
   return out
 }
 
+// ─── Operadores — salvar individualmente (imediato, sem esperar "Salvar na nuvem") ─
+
+export async function saveOperador(op) {
+  if (!state.sb) return
+  try {
+    await state.sb.from('caixa_operadores').upsert({
+      id: op.id, nome: op.nome, ativo: op.ativo, ordem: op.ordem
+    })
+  } catch (e) {}
+}
+
+export async function deleteOperador(id) {
+  if (!state.sb) return
+  try { await state.sb.from('caixa_operadores').delete().eq('id', id) } catch (e) {}
+}
+
+export async function setOperadorSenha(id, senha) {
+  if (!state.sb) return { ok: false, erro: 'sem_conexao' }
+  try {
+    const { error } = await state.sb.rpc('operador_definir_senha', { p_id: id, p_senha: senha })
+    return error ? { ok: false, erro: error.message } : { ok: true }
+  } catch (e) { return { ok: false, erro: e.message } }
+}
+
+// ─── Gerentes — criar/remover pelo app (sem SQL manual) ──────────────────────
+
+export async function criarGerente(id, nome, pin) {
+  if (!state.sb) return { ok: false, erro: 'sem_conexao' }
+  try {
+    const { data, error } = await state.sb.rpc('gerente_criar', { p_id: id, p_nome: nome, p_pin: pin })
+    return error ? { ok: false, erro: error.message } : (data || { ok: true })
+  } catch (e) { return { ok: false, erro: e.message } }
+}
+
+export async function removerGerente(id) {
+  if (!state.sb) return { ok: false, erro: 'sem_conexao' }
+  try {
+    const { error } = await state.sb.rpc('gerente_remover', { p_id: id })
+    return error ? { ok: false, erro: error.message } : { ok: true }
+  } catch (e) { return { ok: false, erro: e.message } }
+}
+
 export async function loadAprovacoes(fechamentoIds) {
   if (!state.sb || !fechamentoIds?.length) return {}
   try {

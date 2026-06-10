@@ -326,18 +326,30 @@
                 </summary>
                 <div class="config-content">
                   <div class="alert blue">
-                    A aprovação valida o PIN <b>no servidor</b> (bcrypt) — o app nunca lê nem guarda o PIN.
-                    O <b>service_role nunca é usado no frontend</b>. Para cadastrar gerentes, edite e rode o SQL abaixo no Supabase.
+                    O PIN fica protegido por bcrypt <b>no servidor</b> — o app nunca lê o hash.
+                    O <b>service_role nunca é usado no frontend</b>.
                   </div>
                   <div class="grid" id="gerentesList"></div>
-                  <div class="btnrow" style="margin-top:12px">
-                    <button class="btn secondary" onclick="window.__config.refreshGerentes()">Atualizar lista</button>
-                    <button class="btn primary" onclick="window.__config.copyGerentesSql()">Copiar SQL de gerentes</button>
+                  <div class="config" style="margin-top:14px">
+                    <div class="grid g3">
+                      <div class="field">
+                        <label>Nome do gerente</label>
+                        <input id="newGerenteName" placeholder="Ex: Evandro">
+                      </div>
+                      <div class="field">
+                        <label>PIN (4–6 dígitos)</label>
+                        <input id="newGerentePin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+                      </div>
+                      <div class="field">
+                        <label>Confirmar PIN</label>
+                        <input id="newGerentePinConfirm" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+                      </div>
+                    </div>
+                    <div class="btns" style="margin-top:10px">
+                      <button class="btn primary" onclick="window.__config.addGerente()">Criar gerente</button>
+                      <button class="btn secondary" onclick="window.__config.refreshGerentes()">Atualizar lista</button>
+                    </div>
                   </div>
-                  <div class="alert warn" style="margin-top:12px">
-                    Na última linha do SQL, troque <b>id</b>, <b>nome</b> e <b>PIN</b> antes de rodar. Use um PIN de 4 a 6 dígitos. Rode uma linha por gerente.
-                  </div>
-                  <textarea id="gerentesSqlBox" style="min-height:320px;margin-top:8px" readonly></textarea>
                 </div>
               </details>
 

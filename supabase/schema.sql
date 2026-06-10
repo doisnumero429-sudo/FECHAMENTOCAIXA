@@ -591,7 +591,45 @@ $func$;
 revoke all on function public.gerente_aprovar(text,text,text,text,text,jsonb) from public;
 grant execute on function public.gerente_aprovar(text,text,text,text,text,jsonb) to anon, authenticated;
 
--- Cadastre os gerentes (troque id, nome e PIN). Execute uma vez por gerente:
--- insert into public.caixa_gerentes (id, nome, pin_hash)
---   values ('gerente1','Nome do Gerente', extensions.crypt('1234', extensions.gen_salt('bf')))
+-- ─── Operadores: campo de senha (hash bcrypt, verificado server-side) ─────────
+
+alter table public.caixa_operadores add column if not exists senha_hash text;
+
+-- Define/troca a senha de um operador. O cliente nunca lê o hash.
+create or replace function public.operador_definir_senha(p_id text, p_senha text)
+returns boolean
+language plpgsql security definer set search_path = public, extensions as $func$
+begin
+  if not exists (select 1 from public.caixa_operadores where id = p_id) then return false; end if;
+  update public.caixa_operadores
+    set senha_hash = extensions.crypt(p_senha, extensions.gen_salt('bf'))
+    where id = p_id;
+  return true;
+end; $func$;
+revoke all on function public.operador_definir_senha(text, text) from public;
+grant execute on function public.operador_definir_senha(text, text) to anon, authenticated;
+
+-- ─── Gerentes: criar/remover pelo app (sem SQL manual) ──────────────────────
+
+create or replace function public.gerente_criar(p_id text, p_nome text, p_pin text)
+returns jsonb
+language plpgsql security definer set search_path = public, extensions as $func$
+begin
+  insert into public.caixa_gerentes (id, nome, pin_hash, ativo)
+    values (p_id, p_nome, extensions.crypt(p_pin, extensions.gen_salt('bf')), true)
+    on conflict (id) do update set nome = excluded.nome, pin_hash = excluded.pin_hash, ativo = true;
+  return jsonb_build_object('ok', true, 'id', p_id, 'nome', p_nome);
+end; $func$;
+revoke all on function public.gerente_criar(text, text, text) from public;
+grant execute on function public.gerente_criar(text, text, text) to anon, authenticated;
+
+create or replace function public.gerente_remover(p_id text)
+returns boolean
+language plpgsql security definer set search_path = public, extensions as $func$
+begin
+  update public.caixa_gerentes set ativo = false where id = p_id;
+  return true;
+end; $func$;
+revoke all on function public.gerente_remover(text) from public;
+grant execute on function public.gerente_remover(text) to anon, authenticated;
 --   on conflict (id) do update set pin_hash = excluded.pin_hash, nome = excluded.nome, ativo = true;
