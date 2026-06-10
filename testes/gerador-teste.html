@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gerador de impressões de teste — Araçá Grill</title>
+<style>
+  :root { --line:#e5e7eb; --soft:#f8fafc; --brand:#f7a51c; --brand2:#ff6b1a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#f3f4f6; color:#111827; padding:18px; }
+  .wrap { max-width:880px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:#6b7280; font-size:13px; margin-bottom:18px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 12px; }
+  label { display:block; font-size:12px; font-weight:700; color:#374151; margin-bottom:4px; }
+  input, select { width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; font-size:14px; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .btn { border:0; border-radius:12px; padding:11px 14px; font-weight:800; font-size:14px; cursor:pointer; color:#fff; }
+  .btn.brand { background:linear-gradient(135deg,var(--brand),var(--brand2)); color:#111827; }
+  .btn.blue { background:#2563eb; }
+  .btn.gray { background:#6b7280; }
+  .btn.light { background:#eef2f7; color:#374151; }
+  .grid-cenarios { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .cenario { border:1px solid var(--line); border-radius:12px; padding:12px; background:var(--soft); }
+  .cenario b { font-size:14px; }
+  .cenario p { font-size:12px; color:#6b7280; margin:4px 0 10px; line-height:1.4; }
+  .cenario .btn { width:100%; }
+  .log { background:#0b1020; color:#d1fae5; font-family:ui-monospace,Menlo,monospace; font-size:12px; border-radius:12px; padding:12px; min-height:90px; max-height:280px; overflow:auto; white-space:pre-wrap; }
+  .esperado { background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:12px; font-size:13px; margin-top:10px; display:none; }
+  .esperado.show { display:block; }
+  .esperado h3 { margin:0 0 6px; font-size:13px; }
+  .esperado table { width:100%; border-collapse:collapse; margin:6px 0; }
+  .esperado td { padding:3px 6px; border-bottom:1px solid #fef3c7; font-size:13px; }
+  .esperado td:last-child { text-align:right; font-weight:700; }
+  textarea { width:100%; min-height:150px; font-family:ui-monospace,Menlo,monospace; font-size:12px; padding:12px; border:1px solid #d1d5db; border-radius:10px; }
+  .muted { color:#6b7280; font-size:12px; }
+  .ok { color:#16a34a; } .err { color:#f87171; }
+  .pill { display:inline-block; background:#dbeafe; color:#1e40af; font-size:11px; font-weight:800; padding:3px 9px; border-radius:999px; }
+  details summary { cursor:pointer; font-weight:800; font-size:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🖨️ Gerador de impressões de teste</h1>
+  <div class="sub">Simula o agente da impressora: cria NFC-e, sangrias e cancelamentos falsos para você testar o fechamento e a conciliação. <b>Use só no projeto de testes.</b></div>
+
+  <div class="card">
+    <h2>1. Conexão</h2>
+    <div class="row">
+      <div><label>Supabase URL</label><input id="url" value="https://qsnxpvzhetrsjjjkvxiz.supabase.co"></div>
+      <div><label>Anon key (pública)</label><input id="key" value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFzbnhwdnpoZXRyc2pqamt2eGl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA5NTYxODksImV4cCI6MjA5NjUzMjE4OX0.DmSC9fDmDD-Bjylkwubfuqxh6sxLk4Enxbtam3aWDgw"></div>
+    </div>
+    <p class="muted" style="margin-top:8px">A anon key já é pública (vai no app). Não cole a <b>service_role</b> aqui.</p>
+  </div>
+
+  <div class="card">
+    <h2>2. Dia e turno do teste</h2>
+    <div class="row3">
+      <div><label>Data do turno</label><input type="date" id="data"></div>
+      <div><label>Turno</label>
+        <select id="turno"><option value="almoco">Almoço (11h–15h)</option><option value="noite">Noite (18h–23h)</option></select>
+      </div>
+      <div style="align-self:end"><button class="btn light" onclick="resumoDia()">Ver resumo do dia</button></div>
+    </div>
+    <p class="muted" style="margin-top:8px">⚠️ Use <b>a mesma data</b> aqui e na Etapa 1 do fechamento. Antes das 6h o turno pertence ao dia anterior (o app faz isso automático).</p>
+  </div>
+
+  <div class="card">
+    <h2>3. Cenários (gera NFC-e do dia)</h2>
+    <div class="grid-cenarios" id="cenarios"></div>
+    <div class="esperado" id="esperado"></div>
+  </div>
+
+  <div class="card">
+    <h2>4. Sangrias e cancelamentos (Etapa 5)</h2>
+    <div class="row">
+      <button class="btn blue" onclick="gerarSangrias()">Gerar 3 sangrias (músico, extra, vale)</button>
+      <button class="btn blue" onclick="gerarCancelamentos()">Gerar 2 cancelamentos</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Registro</h2>
+    <div class="log" id="log">Pronto. Escolha um cenário acima.</div>
+  </div>
+
+  <div class="card">
+    <h2>5. Limpar dados de teste</h2>
+    <p class="muted">A exclusão é feita no <b>SQL Editor do Supabase</b> (a anon key não pode apagar — proteção de produção). Copie e rode lá:</p>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn gray" onclick="copiarSql('dia')">Copiar SQL — apagar só este dia</button>
+      <button class="btn gray" onclick="copiarSql('tudo')">Copiar SQL — apagar TUDO</button>
+    </div>
+    <details>
+      <summary>Ver o SQL</summary>
+      <textarea id="sqlBox" readonly style="margin-top:10px"></textarea>
+    </details>
+  </div>
+
+  <div class="sub" style="text-align:center">Araçá Grill · ferramenta de teste · não faz parte do app publicado</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id)
+const round2 = n => Math.round(n*100)/100
+const brl = n => 'R$ ' + Number(n).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})
+
+// Data padrão com a regra de turno (antes das 6h = dia anterior)
+;(function(){
+  const d = new Date(); if (d.getHours() < 6) d.setDate(d.getDate()-1)
+  $('data').value = d.toISOString().slice(0,10)
+})()
+
+function cfg(){ return { url:$('url').value.trim().replace(/\/$/,''), key:$('key').value.trim() } }
+function headers(){ const {key}=cfg(); return { apikey:key, Authorization:'Bearer '+key, 'Content-Type':'application/json', Prefer:'return=minimal' } }
+function getData(){ return $('data').value }
+function getTurno(){ return $('turno').value }
+
+function log(msg, cls){ const el=$('log'); const t=new Date().toLocaleTimeString('pt-BR'); el.innerHTML += `\n<span class="${cls||''}">[${t}] ${msg}</span>`; el.scrollTop=el.scrollHeight }
+
+function randSha(){ const a=new Uint8Array(32); crypto.getRandomValues(a); return [...a].map(b=>b.toString(16).padStart(2,'0')).join('') }
+function horaTurno(){
+  const noite = getTurno()==='noite'
+  const h = noite ? 18+Math.floor(Math.random()*5) : 11+Math.floor(Math.random()*4)
+  const m = Math.floor(Math.random()*60)
+  return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')
+}
+function dataHora(){ return `${getData()}T${horaTurno()}:00-03:00` }
+
+// Divide um total em N valores positivos somando exatamente o total
+function splitTotal(total, count){
+  total = round2(total)
+  if (count<=1) return [total]
+  const parts=[]; let rem=total
+  for(let i=0;i<count-1;i++){
+    const restCount=count-i, avg=rem/restCount
+    let v=round2(avg*(0.6+Math.random()*0.8))
+    v=Math.max(1, Math.min(v, round2(rem-(restCount-1))))
+    parts.push(v); rem=round2(rem-v)
+  }
+  parts.push(round2(rem)); return parts
+}
+
+async function insertRows(table, rows){
+  if(!rows.length) return
+  const {url}=cfg()
+  const res = await fetch(`${url}/rest/v1/${table}`, { method:'POST', headers:headers(), body:JSON.stringify(rows) })
+  if(!res.ok) throw new Error(`${table} → HTTP ${res.status}: ${await res.text()}`)
+}
+
+// ── Cenários ──────────────────────────────────────────────────────────────
+const CENARIOS = {
+  certo: { nome:'✅ Caixa certinho',
+    desc:'NFC-e batem com o que você vai digitar. Resultado: tudo confere.',
+    nfce:{credito:450,debito:380,pix:150,dinheiro:220},
+    typed:{credito:450,debito:380,pix:150,dinheiro:220},
+    esperado:'Status <b>Sem diferença / Dentro da tolerância</b>. Nenhum alerta de troca.' },
+  troca: { nome:'🔄 Troca Crédito↔Débito',
+    desc:'No sistema, R$230 entraram como Débito mas no caixa foram Crédito. O total fecha.',
+    nfce:{credito:300,debito:530,pix:150,dinheiro:220},
+    typed:{credito:530,debito:300,pix:150,dinheiro:220},
+    esperado:'Insight <b>🔄 Provável troca Crédito↔Débito (~R$230, alta confiança)</b>. Botão "Usar como explicação".' },
+  pix: { nome:'📱 PIX não registrado',
+    desc:'O agente capturou R$50 a mais em PIX do que você informa.',
+    nfce:{credito:450,debito:380,pix:200,dinheiro:220},
+    typed:{credito:450,debito:380,pix:150,dinheiro:220},
+    esperado:'Insight <b>📱 PIX a mais (+R$50)</b> e status <b>Pendente</b>.' },
+  tolerancia: { nome:'🪙 Diferença de centavos',
+    desc:'Crédito com R$0,08 de diferença — dentro da tolerância configurada.',
+    nfce:{credito:450.08,debito:380,pix:150,dinheiro:220},
+    typed:{credito:450,debito:380,pix:150,dinheiro:220},
+    esperado:'Diferença em verde (✓) e status <b>Dentro da tolerância</b>.' },
+  grande: { nome:'⚠️ Diferença grande (exige gerente)',
+    desc:'R$80 a mais no dinheiro, sem compensação. Vira pendência.',
+    nfce:{credito:450,debito:380,pix:150,dinheiro:300},
+    typed:{credito:450,debito:380,pix:150,dinheiro:220},
+    esperado:'Status <b>Pendente</b> → abre o painel <b>🔐 Aprovação do gerente</b>.' }
+}
+
+function renderCenarios(){
+  $('cenarios').innerHTML = Object.entries(CENARIOS).map(([k,c])=>`
+    <div class="cenario">
+      <b>${c.nome}</b>
+      <p>${c.desc}</p>
+      <button class="btn brand" onclick="gerarCenario('${k}')">Gerar este cenário</button>
+    </div>`).join('')
+}
+renderCenarios()
+
+async function gerarCenario(k){
+  const c = CENARIOS[k]
+  try{
+    log(`Gerando "${c.nome}" para ${getData()} (${getTurno()})...`)
+    const rows=[]
+    for(const [forma,total] of Object.entries(c.nfce)){
+      if(total<=0) continue
+      const count=Math.max(1, Math.round(total/100))
+      for(const v of splitTotal(total,count))
+        rows.push({ data_hora:dataHora(), data_turno:getData(), mesa:String(1+Math.floor(Math.random()*40)),
+          pedido:String(1000+Math.floor(Math.random()*9000)), valor_total:v, gorjeta:0,
+          forma_pagamento:forma, raw_text:`TESTE ${forma} ${v}`, job_id:Math.floor(Math.random()*100000), sha256:randSha() })
+    }
+    await insertRows('caixa_nfce_eventos', rows)
+    log(`✓ ${rows.length} NFC-e inseridos.`, 'ok')
+    mostrarEsperado(c)
+  }catch(e){ log('✗ '+e.message, 'err') }
+}
+
+function mostrarEsperado(c){
+  const t=c.typed
+  $('esperado').className='esperado show'
+  $('esperado').innerHTML = `
+    <h3>👉 No fechamento, digite estes valores:</h3>
+    <div class="muted">Etapa 1 — <b>Abertura: R$ 0,00</b> · use a data ${getData()}</div>
+    <table>
+      <tr><td>Etapa 3 · Crédito</td><td>${brl(t.credito)}</td></tr>
+      <tr><td>Etapa 3 · Débito</td><td>${brl(t.debito)}</td></tr>
+      <tr><td>Etapa 3 · PIX</td><td>${brl(t.pix)}</td></tr>
+      <tr><td>Etapa 4 · Dinheiro (gaveta)</td><td>${brl(t.dinheiro)}</td></tr>
+    </table>
+    <div style="margin-top:8px"><span class="pill">Resultado esperado</span> ${c.esperado}</div>`
+}
+
+async function gerarSangrias(){
+  try{
+    const base=[ {tipo:'musico',motivo:'Pagamento músico (teste)',valor:100},
+      {tipo:'extra',motivo:'Diária freelancer (teste)',valor:80},
+      {tipo:'vale',motivo:'Vale funcionário (teste)',valor:50} ]
+    const rows=base.map(s=>({ data_hora:dataHora(), data_turno:getData(), operador:'Teste',
+      motivo:s.motivo, valor:s.valor, tipo:s.tipo, confirmado:false, job_id:Math.floor(Math.random()*100000), sha256:randSha() }))
+    await insertRows('caixa_sangrias', rows)
+    log(`✓ ${rows.length} sangrias inseridas (músico 100, extra 80, vale 50).`, 'ok')
+  }catch(e){ log('✗ '+e.message,'err') }
+}
+
+async function gerarCancelamentos(){
+  try{
+    const base=[ {produto:'Picanha (teste)',motivo:'Cliente desistiu',valor:89.9,qtde:1,mesa:'12'},
+      {produto:'Refrigerante (teste)',motivo:'Lançado errado',valor:8,qtde:1,mesa:'7'} ]
+    const rows=base.map(c=>({ data_hora:dataHora(), data_turno:getData(), mesa:c.mesa, operador:'Teste',
+      motivo:c.motivo, produto:c.produto, qtde:c.qtde, valor:c.valor, job_id:Math.floor(Math.random()*100000), sha256:randSha() }))
+    await insertRows('caixa_cancelamentos', rows)
+    log(`✓ ${rows.length} cancelamentos inseridos.`, 'ok')
+  }catch(e){ log('✗ '+e.message,'err') }
+}
+
+async function resumoDia(){
+  try{
+    const {url}=cfg(); const d=getData()
+    log(`Buscando NFC-e de ${d}...`)
+    const res=await fetch(`${url}/rest/v1/caixa_nfce_eventos?data_turno=eq.${d}&select=forma_pagamento,valor_total`,{headers:{apikey:cfg().key,Authorization:'Bearer '+cfg().key}})
+    if(!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+    const rows=await res.json()
+    if(!rows.length){ log('Nenhum NFC-e neste dia ainda.'); return }
+    const agg={}; rows.forEach(r=>agg[r.forma_pagamento]=(agg[r.forma_pagamento]||0)+Number(r.valor_total||0))
+    const linhas=Object.entries(agg).map(([f,v])=>`   ${f}: ${brl(v)}`).join('\n')
+    const total=Object.values(agg).reduce((s,v)=>s+v,0)
+    log(`Resumo (${rows.length} cupons):\n${linhas}\n   TOTAL: ${brl(total)}`, 'ok')
+  }catch(e){ log('✗ '+e.message,'err') }
+}
+
+function sqlLimpar(escopo){
+  const d=getData()
+  if(escopo==='tudo') return `-- APAGAR TODOS OS DADOS DE TESTE (fechamentos + dados do agente)
+delete from public.caixa_fechamento_resumo;
+delete from public.caixa_aprovacoes;
+delete from public.caixa_fechamento_pagamentos;
+delete from public.caixa_fechamentos;
+delete from public.caixa_nfce_eventos;
+delete from public.caixa_sangrias;
+delete from public.caixa_cancelamentos;
+delete from public.caixa_pedidos_foto;`
+  return `-- APAGAR SÓ O DIA ${d}
+delete from public.caixa_fechamento_resumo where data_turno = '${d}';
+delete from public.caixa_aprovacoes where fechamento_id in (select id from public.caixa_fechamentos where data_movimento = '${d}');
+delete from public.caixa_fechamentos where data_movimento = '${d}';
+delete from public.caixa_nfce_eventos where data_turno = '${d}';
+delete from public.caixa_sangrias where data_turno = '${d}';
+delete from public.caixa_cancelamentos where data_turno = '${d}';`
+}
+
+function copiarSql(escopo){
+  const sql=sqlLimpar(escopo)
+  $('sqlBox').value=sql
+  navigator.clipboard?.writeText(sql)
+  log(`SQL de limpeza (${escopo==='tudo'?'tudo':'só '+getData()}) copiado. Cole no SQL Editor do Supabase.`, 'ok')
+}
+$('sqlBox').value = sqlLimpar('dia')
+$('data').addEventListener('change', ()=>{ $('sqlBox').value=sqlLimpar('dia') })
+</script>
+</body>
+</html>
