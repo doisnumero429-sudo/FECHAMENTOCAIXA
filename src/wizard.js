@@ -181,8 +181,10 @@ function stepOpening() {
         <select id="operador"><option value="">Selecione...</option>${optsOp}</select></div>
       <div class="field"><label>Turno</label>
         <select id="turno"><option value="">Selecione...</option>${optsTs}</select></div>
-      <div class="field"><label>Data do movimento</label>
-        <input type="date" id="dataMov" value="${state.current.data || today()}"></div>
+      <div class="field"><label>Data do turno</label>
+        <input type="date" id="dataMov" value="${state.current.data || today()}">
+        ${new Date().getHours() < 6 ? '<div class="hint" style="color:#f59e0b">Antes das 6h — data ajustada para o turno anterior.</div>' : ''}
+      </div>
       <div class="field"><label>Terminal / caixa</label>
         <input id="terminal" value="${esc(state.current.terminal || 'CAIXA')}"></div>
       <div class="field"><label>Valor de abertura da gaveta</label>

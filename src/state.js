@@ -46,7 +46,10 @@ export function uid(p = 'id') {
 }
 
 export function today() {
-  return new Date().toISOString().slice(0, 10)
+  const d = new Date()
+  // Antes das 6h o turno ainda pertence ao dia anterior (igual ao agente)
+  if (d.getHours() < 6) d.setDate(d.getDate() - 1)
+  return d.toISOString().slice(0, 10)
 }
 
 export function clone(x) {
