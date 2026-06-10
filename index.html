@@ -29,6 +29,7 @@
       <nav class="nav">
         <button class="active" data-page="fechamento"><i data-lucide="layout-dashboard"></i><span>Fechamento guiado</span></button>
         <button data-page="consulta"><i data-lucide="search"></i><span>Conferência</span></button>
+        <button data-page="dashboard"><i data-lucide="bar-chart-3"></i><span>Dashboard</span></button>
         <button data-page="config"><i data-lucide="settings-2"></i><span>Configurações</span></button>
       </nav>
     </aside>
@@ -91,6 +92,24 @@
             </div>
             <div class="divider"></div>
             <div class="grid" id="closures"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Página: Dashboard -->
+      <section class="page" id="page-dashboard">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>Dashboard inteligente</h3>
+              <small>Faturamento, gorjeta, cancelamentos, sangrias e conciliação do período.</small>
+            </div>
+            <div class="btns">
+              <button class="btn light" id="btnDashRefresh"><i data-lucide="refresh-cw"></i> Atualizar</button>
+            </div>
+          </div>
+          <div class="body">
+            <div id="dashHost"></div>
           </div>
         </div>
       </section>

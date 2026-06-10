@@ -345,6 +345,34 @@ export async function aprovarComGerente({ fechamentoId, gerenteId, pin, decisao,
   }
 }
 
+// ─── Dashboard — carrega dados de um período ─────────────────────────────────
+// Lê resumo, cancelamentos, sangrias e eventos NFC-e (gorjeta) num intervalo.
+export async function loadDashboardData(dataIni, dataFim) {
+  if (!state.sb) return null
+  const out = { resumo: [], cancelamentos: [], sangrias: [], nfce: [] }
+  try {
+    const r = await state.sb.from('caixa_fechamento_resumo').select('*')
+      .gte('data_turno', dataIni).lte('data_turno', dataFim).order('data_turno', { ascending: true })
+    if (!r.error) out.resumo = r.data || []
+  } catch (e) {}
+  try {
+    const r = await state.sb.from('caixa_cancelamentos').select('*')
+      .gte('data_turno', dataIni).lte('data_turno', dataFim).order('data_hora', { ascending: true })
+    if (!r.error) out.cancelamentos = r.data || []
+  } catch (e) {}
+  try {
+    const r = await state.sb.from('caixa_sangrias').select('*')
+      .gte('data_turno', dataIni).lte('data_turno', dataFim).order('data_hora', { ascending: true })
+    if (!r.error) out.sangrias = r.data || []
+  } catch (e) {}
+  try {
+    const r = await state.sb.from('caixa_nfce_eventos').select('data_turno,forma_pagamento,valor_total,gorjeta')
+      .gte('data_turno', dataIni).lte('data_turno', dataFim)
+    if (!r.error) out.nfce = r.data || []
+  } catch (e) {}
+  return out
+}
+
 export async function loadAprovacoes(fechamentoIds) {
   if (!state.sb || !fechamentoIds?.length) return {}
   try {

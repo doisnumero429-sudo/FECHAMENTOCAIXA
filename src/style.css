@@ -599,6 +599,37 @@ tr:hover td{background:rgba(245,158,11,.03)}
 .num{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
 .hidden{display:none!important}
 
+/* ── Dashboard ──────────────────────────────────────────── */
+.dash-controls{
+  display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;
+  align-items:flex-end;margin-bottom:18px
+}
+.dash-dates{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.dash-dates .field{margin:0}
+.dash-dates input[type=date]{
+  padding:9px 12px;border:1px solid var(--line2);border-radius:12px;
+  font-family:inherit;font-size:13px;background:#fff
+}
+.dash-tabs{display:flex;gap:8px;flex-wrap:wrap}
+.dash-tab{
+  padding:8px 15px;border:1.5px solid var(--line2);border-radius:999px;
+  background:#fff;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--muted);
+  transition:all var(--t);white-space:nowrap
+}
+.dash-tab:hover{border-color:var(--blue);color:var(--blue)}
+.dash-tab.active{background:var(--text);color:#fff;border-color:var(--text)}
+.dash-sec{
+  background:linear-gradient(180deg,#fff,#f9fbfe);
+  border:1px solid var(--line);border-radius:16px;padding:16px;margin:14px 0;
+  box-shadow:0 1px 2px rgba(0,0,0,.03),0 6px 20px rgba(15,23,42,.05)
+}
+.dash-sec h4{
+  margin:0 0 12px;font-size:13px;font-weight:800;color:var(--text);
+  padding-bottom:8px;border-bottom:1px solid var(--line)
+}
+.dash-sec canvas{display:block;width:100%!important}
+#page-dashboard table tfoot td{border-top:2px solid var(--line2)}
+
 /* ── Toast ──────────────────────────────────────────────── */
 .toast{
   position:fixed;
