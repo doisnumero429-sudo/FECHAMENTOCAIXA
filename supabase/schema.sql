@@ -277,8 +277,10 @@ create table if not exists public.caixa_sangrias (
   operador text,
   motivo text,
   valor numeric(10,2),
-  -- musico | extra | cofre | outro (auto-classificado pelo agente via motivo)
-  tipo text not null default 'outro' check (tipo in ('musico', 'extra', 'cofre', 'outro')),
+  -- musico | extra | vale | cofre | outro (auto-classificado pelo agente via motivo)
+  -- vale  = adiantamento de salário para funcionário fixo
+  -- extra = freelancer ou funcionário em sua folga trabalhando
+  tipo text not null default 'outro' check (tipo in ('musico', 'extra', 'vale', 'cofre', 'outro')),
   -- true quando o operador confirmar/ajustar a classificação no fechamento
   confirmado boolean not null default false,
   job_id integer,

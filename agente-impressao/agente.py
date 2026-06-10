@@ -358,16 +358,31 @@ _MUSICO_RE = re.compile(
 
 
 def _classify_sangria_tipo(motivo: str) -> str:
+    """
+    vale   = adiantamento de salário para funcionário fixo (prefixo VALE)
+    extra  = freelancer ou funcionário em sua folga trabalhando (prefixo EXTRA, sem música)
+    musico = músico/banda contratado (EXTRA + palavra de música, ou MUSICO/BANDA)
+    cofre  = retirada pelo dono (prefixo COFRE / RETIRADA COFRE)
+    outro  = não classificado automaticamente
+    """
     folded = _ascii_fold(motivo)
     raw = motivo.upper()
+
+    # Músico: verificar ANTES do check de EXTRA para não cair em "extra"
     if _MUSICO_RE.search(folded) or _MUSICO_RE.search(raw):
         return "musico"
+
     if any(k in folded for k in ("COFRE", "RETIRADA COFRE", "RETIRADA CAIXA", "DONO")):
         return "cofre"
-    if re.match(r"^(VALE|EXTRA)\s", folded) or any(
-        k in folded for k in ("AUX ", " AUX", "FUNCIONARIO", "FUNC ", "SEGURANCA", "COZINHA")
-    ):
+
+    # Vale: adiantamento de salário para funcionário fixo
+    if re.match(r"^VALE\s", folded):
+        return "vale"
+
+    # Extra: freelancer ou folguista (EXTRA sem música já foi descartado acima)
+    if re.match(r"^EXTRA\s", folded):
         return "extra"
+
     return "outro"
 
 
