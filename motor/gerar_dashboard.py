@@ -23,12 +23,34 @@ def limpar(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def resolver_nome(trunc: str, unit: float, fold2orig: dict, cat_norm: dict) -> str:
+    """A TOTVS trunca o nome no comprovante de cancelamento (~12 chars).
+    Liga ao nome completo do catálogo; se o prefixo casar com vários,
+    desempata pelo preço unitário do item cancelado."""
+    f = ascii_fold(trunc)
+    cands = [k for k in fold2orig if k.startswith(f)]
+    if not cands:
+        return trunc
+    if len(cands) == 1:
+        return fold2orig[cands[0]]
+    if unit:
+        for k in cands:
+            if abs((cat_norm[k].get("p") or 0) - unit) < 0.01:
+                return fold2orig[k]
+    return fold2orig[min(cands, key=len)]  # mais genérico
+
+
 def montar_payload(src: str) -> dict:
     catalogo = carregar_catalogo()
     cat_norm = {ascii_fold(k): v for k, v in catalogo.items()}
     cat_keys = list(cat_norm.keys())
+    fold2orig = {ascii_fold(k): k for k in catalogo}
     fes = extrair_fechamentos(src)
     cancel = extrair_cancelamentos(src)
+    for c in cancel:
+        unit = (c["valor"] / c["qtde"]) if c.get("qtde") else c["valor"]
+        c["produto_raw"] = c["produto"]
+        c["produto"] = resolver_nome(c["produto"], unit, fold2orig, cat_norm)
 
     fechamentos = []
     for f in fes:
@@ -112,6 +134,17 @@ tr:hover td{background:#fafafa}
 .cap{max-height:430px;overflow:auto;border:1px solid #f0f0f0;border-radius:6px}
 .drill{display:none;margin-bottom:20px}
 .drill.open{display:block}
+.acc{border:1px solid #eee;border-radius:8px;margin-bottom:8px;overflow:hidden}
+.acch{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;background:#fafbfc;user-select:none}
+.acch:hover{background:#f3f5f8}
+.acch.open{background:#1a1a2e;color:#fff}
+.acharrow{font-size:11px;color:#e63946;transition:transform .15s;flex-shrink:0}
+.acch.open .acharrow{color:#fff}
+.acht{flex:1;font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.achr{font-size:12px;font-weight:700;flex-shrink:0}
+.achc{font-size:11px;opacity:.7;flex-shrink:0;margin-right:4px}
+.accb{display:none;padding:4px 10px 8px}
+.accb.open{display:block}
 .foot{text-align:center;color:#aaa;font-size:11px;padding:18px}
 .vazio{color:#aaa;text-align:center;padding:24px;font-size:13px}
 canvas{max-height:240px}
@@ -149,9 +182,9 @@ canvas{max-height:240px}
     <div class="sec"><h3>🏆 Top 12 por faturamento (R$)</h3><div id="bars-prod"></div></div>
     <div class="sec"><h3>Faturamento por grupo (R$)</h3><canvas id="cv-grupos"></canvas></div>
   </div>
-  <div class="sec"><h3>Todos os produtos</h3>
+  <div class="sec"><h3>Todos os produtos — clique no grupo para expandir</h3>
     <div class="sbar"><input id="busca" placeholder="🔎 Buscar produto..." oninput="filtraProd()"></div>
-    <div class="cap"><table id="tb-prod"></table></div></div>
+    <div id="acc-prod"></div></div>
 </div>
 <div id="pg-sang" class="page">
   <h2>Sangrias &amp; Comissão</h2><div class="cards" id="kpis-sang"></div>
@@ -159,14 +192,14 @@ canvas{max-height:240px}
     <div class="sec"><h3>Sangrias por categoria</h3><canvas id="cv-sang"></canvas></div>
     <div class="sec"><h3>Comissão por dia (R$)</h3><canvas id="cv-comis"></canvas></div>
   </div>
-  <div class="sec"><h3>Sangrias detalhadas (por data)</h3><div class="cap"><table id="tb-sang"></table></div></div>
+  <div class="sec"><h3>Sangrias por categoria — clique para ver os lançamentos</h3><div id="acc-sang"></div></div>
 </div>
 <div id="pg-cancel" class="page">
   <h2>Cancelamentos</h2><div class="cards" id="kpis-cancel"></div>
-  <div class="sec"><h3>Lançamentos de cancelamento (por data)</h3><div class="cap"><table id="tb-cancel"></table></div></div>
+  <div class="sec"><h3>Por produto — clique para ver os lançamentos por data</h3><div id="acc-cancel"></div></div>
 </div>
 <div id="pg-turno" class="page">
-  <h2>Por Turno</h2><div class="sec"><table id="tb-turno"></table></div>
+  <h2>Por Turno — clique no dia para expandir</h2><div class="sec"><div id="acc-turno"></div></div>
 </div>
 <div class="foot">Painel alimentado pelas capturas do agente · padrão monetário R$ (real brasileiro)</div>
 
@@ -306,31 +339,43 @@ function render(){
   charts.comis=mkChart('cv-comis',{type:'bar',data:{labels:dl,
     datasets:[{data:dl.map(d=>A.dias[d].com),backgroundColor:C.ouro}]},
     options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+money(c.parsed.y)}}}}});
-  document.getElementById('tb-sang').innerHTML = tabela(
-    ['Data','Categoria','Descrição','Valor'],
-    A.sangItens.slice().sort((a,b)=>a.data<b.data?-1:1).map(s=>
-      [s.data,`<span class="tag t-${s.tipo}">${SL[s.tipo]}</span>`,s.desc||'—',{n:money(s.valor)}]),
-    'Sem sangrias no período');
+  const sangGrupos=Object.keys(SL).filter(k=>A.st[k]>0).sort((a,b)=>A.st[b]-A.st[a]).map(k=>({
+    id:'sg-'+k, title:SL[k], right:money(A.st[k]),
+    count:A.sangItens.filter(s=>s.tipo===k).length+' lanç.',
+    body:tabela(['Data','Descrição','Valor'],
+      A.sangItens.filter(s=>s.tipo===k).sort((a,b)=>a.data<b.data?-1:1)
+        .map(s=>[s.data,s.desc||'—',{n:money(s.valor)}]),'—')}));
+  document.getElementById('acc-sang').innerHTML = acordeao(sangGrupos,'Sem sangrias no período');
 
   // Cancelamentos
   const totCancel=A.cancel.reduce((s,c)=>s+c.valor,0);
   document.getElementById('kpis-cancel').innerHTML =
     card('Total cancelado',money(totCancel),'red')+card('Qtde de cancelamentos',A.cancel.length)+
     card('Ticket cancelado médio',money(A.cancel.length?totCancel/A.cancel.length:0));
-  document.getElementById('tb-cancel').innerHTML = tabela(
-    ['Data','Mesa','Operador','Produto','Motivo','Valor'],
-    A.cancel.map(c=>[c.data_hora,c.mesa,c.operador,c.produto,c.motivo||'—',{n:money(c.valor)}]),
-    'Sem cancelamentos no período');
+  const cancPorProd={};
+  A.cancel.forEach(c=>{(cancPorProd[c.produto]=cancPorProd[c.produto]||[]).push(c);});
+  const cancGrupos=Object.keys(cancPorProd)
+    .map(p=>({p,itens:cancPorProd[p],total:cancPorProd[p].reduce((s,c)=>s+c.valor,0)}))
+    .sort((a,b)=>b.total-a.total).map((g,i)=>({
+      id:'cg-'+i, title:g.p, right:money(g.total), count:g.itens.length+'x',
+      body:tabela(['Data','Mesa','Operador','Motivo','Valor'],
+        g.itens.sort((a,b)=>a.data_hora<b.data_hora?-1:1)
+          .map(c=>[c.data_hora,c.mesa,c.operador,c.motivo||'—',{n:money(c.valor)}]),'—')}));
+  document.getElementById('acc-cancel').innerHTML = acordeao(cancGrupos,'Sem cancelamentos no período');
 
-  // Por turno
-  document.getElementById('tb-turno').innerHTML = `<thead><tr><th>Data</th><th>Operador</th>
-    <th class="num">Faturamento</th><th class="num">Comissão</th><th class="num">Sangrias</th>
-    <th class="num">Pessoas</th><th class="num">Ticket</th><th class="num">Diferença</th></tr></thead><tbody>`+
-    (A.turnos.length?A.turnos.map(x=>`<tr><td>${x.data}</td><td>${x.operador}</td>
-    <td class="num">${money(x.faturamento)}</td><td class="num">${money(x.comissoes)}</td>
-    <td class="num">${money(x.sangrias)}</td><td class="num">${x.pessoas}</td><td class="num">${money(x.ticket)}</td>
-    <td class="num" style="color:${x.diferenca<0?'#e63946':'#2a9d5c'}">${money(x.diferenca)}</td></tr>`).join('')
-    :`<tr><td colspan=8 class="vazio">Sem turnos no período</td></tr>`)+`</tbody>`;
+  // Por turno (cada dia expande detalhes)
+  const turnoGrupos=A.turnos.map((x,i)=>({
+    id:'tg-'+i, title:x.data+'  ·  '+x.operador, right:money(x.faturamento),
+    count:x.pessoas+' pessoas',
+    body:tabela(['Indicador','Valor'],[
+      ['Faturamento',{n:money(x.faturamento)}],
+      ['Comissão (gorjeta)',{n:money(x.comissoes)}],
+      ['Sangrias',{n:money(x.sangrias)}],
+      ['Nº de pessoas',{n:x.pessoas}],
+      ['Ticket médio',{n:money(x.ticket)}],
+      ['Diferença de caixa',{n:money(x.diferenca)}],
+    ],'—')}));
+  document.getElementById('acc-turno').innerHTML = acordeao(turnoGrupos,'Sem turnos no período');
 }
 
 function cv(id){return document.getElementById(id);}
@@ -342,10 +387,34 @@ function tabela(cols,rows,vazio){
   return `<thead><tr>`+cols.map((c,i)=>`<th class="${i>=cols.length-1?'num':''}">${c}</th>`).join('')+`</tr></thead><tbody>`+
     rows.map(r=>`<tr>`+r.map(c=>typeof c==='object'?`<td class="num">${c.n}</td>`:`<td>${c}</td>`).join('')+`</tr>`).join('')+`</tbody>`;
 }
+// Acordeão genérico: cada grupo expande/recolhe ao clicar (abre = aberto).
+function acordeao(grupos,vazio,abertos){
+  if(!grupos.length) return `<div class="vazio">${vazio}</div>`;
+  return grupos.map(g=>{const op=abertos&&abertos.has(g.id);
+    return `<div class="acc"><div class="acch ${op?'open':''}" onclick="toggleAcc('${g.id}')">
+      <span class="acharrow" id="ar-${g.id}">${op?'▾':'▸'}</span>
+      <span class="acht">${g.title}</span>
+      <span class="achc">${g.count||''}</span><span class="achr">${g.right||''}</span></div>
+      <div class="accb ${op?'open':''}" id="${g.id}">${g.body}</div></div>`;}).join('');
+}
+function toggleAcc(id){const b=document.getElementById(id);if(!b)return;
+  const h=b.previousElementSibling,a=document.getElementById('ar-'+id);
+  const abrir=!b.classList.contains('open');
+  b.classList.toggle('open',abrir);if(h)h.classList.toggle('open',abrir);if(a)a.textContent=abrir?'▾':'▸';}
+
 function filtraProd(){const q=(document.getElementById('busca').value||'').toLowerCase();
   const l=(window.__prod||[]).filter(p=>p.nome.toLowerCase().includes(q));
-  document.getElementById('tb-prod').innerHTML = tabela(['Produto','Grupo','Qtde','R$ total'],
-    l.map(p=>[p.nome,p.grupo,p.qtde,{n:money(p.valor)}]),'Nenhum produto');}
+  const porGrupo={};l.forEach(p=>{(porGrupo[p.grupo]=porGrupo[p.grupo]||[]).push(p);});
+  const grupos=Object.keys(porGrupo)
+    .map(g=>({g,itens:porGrupo[g],valor:porGrupo[g].reduce((s,p)=>s+p.valor,0),
+             qtde:porGrupo[g].reduce((s,p)=>s+p.qtde,0)}))
+    .sort((a,b)=>b.valor-a.valor).map(o=>({
+      id:'prg-'+o.g.replace(/[^A-Za-z0-9]/g,''), title:o.g, right:money(o.valor), count:o.qtde+' un',
+      body:tabela(['Produto','Qtde','R$ total'],
+        o.itens.sort((a,b)=>b.valor-a.valor).map(p=>[p.nome,p.qtde,{n:money(p.valor)}]),'—')}));
+  // ao buscar, abre automaticamente os grupos com resultado
+  const abertos=q?new Set(grupos.map(x=>x.id)):null;
+  document.getElementById('acc-prod').innerHTML = acordeao(grupos,'Nenhum produto',abertos);}
 
 // ── Drill-down (clique no card abre os lançamentos por data) ──
 function drill(key,el){
