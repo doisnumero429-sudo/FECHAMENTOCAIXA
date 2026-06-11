@@ -245,6 +245,15 @@ def parse_fechamento(text: str) -> Optional[Dict[str, Any]]:
         base = s["descricao"] or s["nome"]
         s["tipo"] = classify_sangria(base)
 
+    # Contas reabertas/canceladas (sem valor — informativo)
+    contas_canc = []
+    for ln in slice_between(detalhe, "CONTAS CANCELADAS DO DIA", "PRODUTOS CANCELADOS").splitlines():
+        m = re.match(r"\s*(.+?)\s+(\d{3,})\s*$", ln)
+        up = ascii_fold(ln).strip()
+        if not m or up.startswith("OPERADOR") or up.startswith("="):
+            continue
+        contas_canc.append({"operador": m.group(1).strip(), "cupom": m.group(2)})
+
     return {
         "reduzido": reduzido,
         "operador_abertura": operador_ab,
@@ -253,6 +262,8 @@ def parse_fechamento(text: str) -> Optional[Dict[str, Any]]:
         "fech_numero": fech_no,
         "abertura_dt": abertura_dt,
         "fechamento_dt": fechamento_dt,
+        "data_iso": _iso_date(fechamento_dt),
+        "contas_canceladas": contas_canc,
         "credito": entradas["credito"],
         "debito": entradas["debito"],
         "dinheiro": entradas["dinheiro"],
@@ -289,6 +300,65 @@ def split_capturas(raw: str) -> List[str]:
         partes = re.split(r"-{80}", b, maxsplit=1)
         corpos.append(partes[1] if len(partes) > 1 else b)
     return corpos
+
+
+def _iso_date(dt_br: Optional[str]) -> str:
+    """'DD/MM/YYYY HH:MM:SS' -> 'YYYY-MM-DD' (vazio se não der)."""
+    if not dt_br:
+        return ""
+    m = re.search(r"(\d{2})/(\d{2})/(\d{2,4})", dt_br)
+    if not m:
+        return ""
+    d, mo, y = m.groups()
+    if len(y) == 2:
+        y = "20" + y
+    return f"{y}-{mo}-{d}"
+
+
+def parse_cancelamento_slip(text: str) -> Optional[Dict[str, Any]]:
+    """Comprovante 'CANCEL. DE PRODUTO' — tem mesa, operador, data, motivo, produto e VALOR."""
+    if "CANCEL. DE PRODUTO" not in text:
+        return None
+    mesa = re.search(r"Mesa:\s*(\w+)", text)
+    op = re.search(r"Operador:\s*(.+)", text)
+    dt = re.search(r"(\d{2}/\d{2}/\d{2,4}\s+\d{2}:\d{2}(?::\d{2})?)", text)
+    mot = re.search(r"Motivo:\s*(.+)", text)
+    # Linha do produto: "<nome> <qtde> <valor un> <valor>"
+    prod, qtde, valor = "", 0, 0.0
+    for line in slice_between(text, "VALOR UN.", "ASSINATURA").splitlines():
+        if line.strip().startswith("=") or not line.strip():
+            continue
+        vs = MONEY_RE.findall(line)
+        mq = re.search(r"\s(\d+)\s+\d", line)
+        if vs:
+            valor = money_br(vs[-1]) or 0.0
+            qtde = int(mq.group(1)) if mq else 1
+            prod = MONEY_RE.sub("", line)
+            prod = re.sub(r"\s+\d+\s*$", "", prod).strip()
+            break
+    return {
+        "data": _iso_date(dt.group(1) if dt else None),
+        "data_hora": dt.group(1).strip() if dt else "",
+        "mesa": mesa.group(1) if mesa else "",
+        "operador": op.group(1).strip() if op else "",
+        "motivo": (mot.group(1).strip() if mot else ""),
+        "produto": prod,
+        "qtde": qtde,
+        "valor": valor,
+    }
+
+
+def extrair_cancelamentos(caminho: str) -> List[Dict[str, Any]]:
+    """Todos os comprovantes de cancelamento de produto, deduplicados."""
+    raw = Path(caminho).read_text(encoding="utf-8", errors="replace")
+    vistos: Dict[Tuple, Dict] = {}
+    for corpo in split_capturas(raw):
+        c = parse_cancelamento_slip(corpo)
+        if not c:
+            continue
+        chave = (c["data_hora"], c["mesa"], c["produto"], c["valor"])
+        vistos.setdefault(chave, c)
+    return sorted(vistos.values(), key=lambda x: x["data_hora"])
 
 
 def extrair_fechamentos(caminho: str) -> List[Dict[str, Any]]:

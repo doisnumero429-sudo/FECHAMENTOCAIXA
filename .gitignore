@@ -11,3 +11,6 @@ __pycache__/
 # Dashboards gerados (saída do motor/gerar_dashboard.py)
 motor/Dashboard_*.html
 dashboard.html
+
+# Dashboards gerados (artefatos)
+motor/*.html
