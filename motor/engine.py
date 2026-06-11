@@ -262,7 +262,7 @@ def parse_fechamento(text: str) -> Optional[Dict[str, Any]]:
         "fech_numero": fech_no,
         "abertura_dt": abertura_dt,
         "fechamento_dt": fechamento_dt,
-        "data_iso": _iso_date(fechamento_dt),
+        "data_iso": _iso_date(abertura_dt or fechamento_dt),  # dia do MOVIMENTO = abertura
         "contas_canceladas": contas_canc,
         "credito": entradas["credito"],
         "debito": entradas["debito"],
@@ -315,6 +315,22 @@ def _iso_date(dt_br: Optional[str]) -> str:
     return f"{y}-{mo}-{d}"
 
 
+def _turno_iso(dt_br: Optional[str]) -> str:
+    """Dia do movimento: horário antes das 06:00 conta para o dia anterior."""
+    if not dt_br:
+        return ""
+    m = re.search(r"(\d{2})/(\d{2})/(\d{2,4})\s+(\d{2}):(\d{2})", dt_br)
+    if not m:
+        return _iso_date(dt_br)
+    import datetime as _dt
+    d, mo, y, hh, mm = m.groups()
+    y = ("20" + y) if len(y) == 2 else y
+    base = _dt.date(int(y), int(mo), int(d))
+    if int(hh) < 6:
+        base -= _dt.timedelta(days=1)
+    return base.isoformat()
+
+
 def parse_cancelamento_slip(text: str) -> Optional[Dict[str, Any]]:
     """Comprovante 'CANCEL. DE PRODUTO' — tem mesa, operador, data, motivo, produto e VALOR."""
     if "CANCEL. DE PRODUTO" not in text:
@@ -337,7 +353,7 @@ def parse_cancelamento_slip(text: str) -> Optional[Dict[str, Any]]:
             prod = re.sub(r"\s+\d+\s*$", "", prod).strip()
             break
     return {
-        "data": _iso_date(dt.group(1) if dt else None),
+        "data": _turno_iso(dt.group(1) if dt else None),
         "data_hora": dt.group(1).strip() if dt else "",
         "mesa": mesa.group(1) if mesa else "",
         "operador": op.group(1).strip() if op else "",

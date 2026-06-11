@@ -43,7 +43,7 @@ def montar_payload(src: str) -> dict:
         cortesias = [{"nome": limpar(c["nome"]), "desc": limpar(c["descricao"]), "valor": c["valor"]}
                      for c in f["cortesias"]]
         fechamentos.append({
-            "data": f["data_iso"], "data_br": (f["fechamento_dt"] or "")[:10],
+            "data": f["data_iso"], "data_br": (f["abertura_dt"] or f["fechamento_dt"] or "")[:10],
             "operador": f["operador_fechamento"], "caixa": f["caixa_numero"], "fech": f["fech_numero"],
             "credito": f["credito"], "debito": f["debito"], "pix": f["pix"], "dinheiro": f["dinheiro"],
             "comissoes": f["comissoes"], "cortesias_total": f["cortesias_total"],
@@ -255,11 +255,11 @@ function render(){
     card('Diferença de caixa',money(t.diferenca),t.diferenca<0?'red':'green');
   if(drillAtivo) drill(drillAtivo); else document.getElementById('drill').classList.remove('open');
 
-  charts.formas=new Chart(cv('cv-formas'),{type:'doughnut',data:{labels:['Crédito','Débito','PIX','Dinheiro'],
+  charts.formas=mkChart('cv-formas',{type:'doughnut',data:{labels:['Crédito','Débito','PIX','Dinheiro'],
     datasets:[{data:[t.credito,t.debito,t.pix,t.dinheiro],backgroundColor:[C.azul,C.roxo,C.verde,C.ouro]}]},
     options:{plugins:{legend:{position:'right'},tooltip:{callbacks:{label:c=>' '+money(c.parsed)}}}}});
   const dlabels=Object.keys(A.dias);
-  charts.dias=new Chart(cv('cv-dias'),{type:'bar',data:{labels:dlabels,
+  charts.dias=mkChart('cv-dias',{type:'bar',data:{labels:dlabels,
     datasets:[{data:dlabels.map(d=>A.dias[d].fat),backgroundColor:C.verde}]},
     options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+money(c.parsed.y)}}}}});
 
@@ -288,7 +288,7 @@ function render(){
      <div class="bbg"><div class="bfill" style="width:${100*p.valor/maxv}%"></div></div>
      <div class="bval">${money(p.valor)}</div></div>`).join('') || '<div class="vazio">Sem produtos no período</div>';
   const grp=A.grp.slice().sort((a,b)=>b.valor-a.valor);
-  charts.grupos=new Chart(cv('cv-grupos'),{type:'bar',data:{labels:grp.map(g=>g.nome),
+  charts.grupos=mkChart('cv-grupos',{type:'bar',data:{labels:grp.map(g=>g.nome),
     datasets:[{data:grp.map(g=>g.valor),backgroundColor:C.laranja}]},
     options:{indexAxis:'y',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+money(c.parsed.x)}}}}});
   window.__prod=prod;filtraProd();
@@ -299,11 +299,11 @@ function render(){
       k==='despesa'?'red':k==='musico'?'purple':k==='vale'?'blue':k==='extra'?'green':'')).join('')
     || card('Sem sangrias','—');
   const sk=Object.keys(SL).filter(k=>A.st[k]>0);
-  charts.sang=new Chart(cv('cv-sang'),{type:'doughnut',data:{labels:sk.map(k=>SL[k]),
+  charts.sang=mkChart('cv-sang',{type:'doughnut',data:{labels:sk.map(k=>SL[k]),
     datasets:[{data:sk.map(k=>A.st[k]),backgroundColor:[C.azul,C.verde,C.roxo,C.ouro,C.verm,C.cinza]}]},
     options:{plugins:{legend:{position:'right'},tooltip:{callbacks:{label:c=>' '+money(c.parsed)}}}}});
   const dl=Object.keys(A.dias);
-  charts.comis=new Chart(cv('cv-comis'),{type:'bar',data:{labels:dl,
+  charts.comis=mkChart('cv-comis',{type:'bar',data:{labels:dl,
     datasets:[{data:dl.map(d=>A.dias[d].com),backgroundColor:C.ouro}]},
     options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' '+money(c.parsed.y)}}}}});
   document.getElementById('tb-sang').innerHTML = tabela(
@@ -334,6 +334,9 @@ function render(){
 }
 
 function cv(id){return document.getElementById(id);}
+// Cria gráfico com segurança: se o Chart.js não carregar, KPIs e tabelas seguem funcionando.
+function mkChart(id,cfg){try{if(typeof Chart==='undefined')return null;const el=cv(id);if(!el)return null;
+  return new Chart(el,cfg);}catch(e){console.warn('grafico',id,e);return null;}}
 function tabela(cols,rows,vazio){
   if(!rows.length) return `<tbody><tr><td colspan="${cols.length}" class="vazio">${vazio}</td></tr></tbody>`;
   return `<thead><tr>`+cols.map((c,i)=>`<th class="${i>=cols.length-1?'num':''}">${c}</th>`).join('')+`</tr></thead><tbody>`+
