@@ -7,7 +7,7 @@ import { initSupabase, syncFromCloud, loadCloudClosures, loadGerentes } from './
 import { render, next, prev, startNew, finish, confirmDivAbertura, syncPay, confirmPay, zeroPay, toggleJson, applyJsonUI, addCash, removeCash, clearCash, copy, copyAll, toggleDif, addPhoto, associarIncerto, changeSangriaTipo, changeCancelamentoMotivo, changeCancelamentoClass, changeDigitacaoTotvs, autofillExplicacao, autofillCompensacao, enviarAprovacao, limparAprovacao, iniciarBuscaFita, skipFita } from './wizard.js'
 import { renderConfig, updateConfigCounters, updSimple, moveSimple, removeSimple, addOperator, addShift, updForm, updAliases, moveForm, removeForm, addForm, resetForms, toggleConfigSections, copySql, saveConfig, updTolerancia, addTolerancia, removeTolerancia, resetTolerancias, refreshGerentes, addGerente, removerGerenteUI, definirSenha } from './config.js'
 import { renderClosures, openPhoto, refreshClosures, copyJson } from './history.js'
-import { renderDashboard, setDashView, applyDashRange, dashboardResize } from './dashboard.js'
+import { renderDashboard, setDashView, applyDashRange, dashboardResize, setDashWeek, dashDrill, filtraProd } from './dashboard.js'
 import { retryOcr } from './ocr.js'
 import { handleManualAdvance, handleFallbackUpload } from './photo-request.js'
 
@@ -41,7 +41,7 @@ window.__config = {
   refreshGerentes, addGerente, removerGerenteUI, definirSenha
 }
 window.__history = { renderClosures, openPhoto, refreshClosures, copyJson }
-window.__dashboard = { renderDashboard, setView: setDashView, apply: applyDashRange }
+window.__dashboard = { renderDashboard, setView: setDashView, apply: applyDashRange, setWeek: setDashWeek, drill: dashDrill, filtraProd }
 window.__ocr = { retryOcr }
 window.__photoRequest = { handleManualAdvance, handleFallbackUpload }
 

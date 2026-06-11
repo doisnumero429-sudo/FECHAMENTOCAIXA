@@ -14,3 +14,5 @@ dashboard.html
 
 # Dashboards gerados (artefatos)
 motor/*.html
+testes/Preview_Painel.html
+testes/_fita.json

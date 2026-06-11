@@ -1,741 +1,493 @@
-// Dashboard inteligente — lê dados reais do Supabase e mostra a visão financeira
-// do período. Reaproveita o design do app (.summary, .table, .chip).
+// Painel do Caixa — Araçá Grill
+// Lê os dados ao vivo do Supabase (caixa_fechamento_fita + caixa_cancelamentos),
+// agrega no cliente por semana (segunda→domingo) ou período personalizado, enriquece
+// os produtos com o catálogo de preços e abre os lançamentos em drill-downs bonitos.
+//
+// Princípios:
+//  - Dia do caixa = ABERTURA (o movimento da madrugada pertence ao dia que abriu).
+//  - Dedup por (caixa, fechamento): o TOTVS reimprime a mesma fita várias vezes.
+//  - Ignora o caixa do garçom (TERMINAL 01 / REDUZIDO / caixa 3, sem entradas).
+//  - Sangrias categorizadas: VALE, EXTRA (freelancer), MÚSICO, DESPESA, COFRE, OUTRO.
+//  - Todos os valores no padrão R$ (real brasileiro).
+
 import { money, esc } from './ui.js'
 import { loadDashboardData } from './supabase.js'
-import { STATUS } from './conciliacao.js'
 import { CATALOGO_PRODUTOS } from './catalogo-produtos.js'
 
 let dashData = null
-let dashView = 'geral'
-let dashIni = ''
-let dashFim = ''
 let dashLoading = false
+let dashView = 'geral'
+let dashFiltro = { ini: null, fim: null, weekKey: 'todo' }
+let dashDrillKey = null
 
 const VIEWS = [
-  ['geral',     '📊 Visão geral'],
-  ['formas',    '💳 Formas'],
-  ['totvs',     '🏦 Conciliação'],
-  ['produtos',  '🍽️ Produtos'],
-  ['cancel',    '❌ Cancelamentos'],
-  ['sangrias',  '💸 Sangrias'],
-  ['concil',    '⚖️ Status'],
-  ['insights',  '💡 Insights']
+  ['geral', '📊 Visão geral'],
+  ['produtos', '🍽️ Produtos'],
+  ['sangrias', '💸 Sangrias & comissão'],
+  ['cancel', '❌ Cancelamentos'],
+  ['turno', '📅 Por turno']
 ]
 
-const CLASS_LABEL = {
-  indevido: 'Indevido',
-  erro_lancamento: 'Erro de lançamento',
-  qualidade: 'Qualidade',
-  cliente_desistiu: 'Cliente desistiu',
-  outro: 'Outro',
-  sem_classificacao: 'Sem classificação'
+const SANG = {
+  vale: { lbl: 'Vale (adiantamento)', ico: '🪙', cor: '#2563eb' },
+  extra: { lbl: 'Extra (freelancer)', ico: '💵', cor: '#16a34a' },
+  musico: { lbl: 'Músico / Banda', ico: '🎵', cor: '#7c3aed' },
+  despesa: { lbl: 'Despesa', ico: '🧾', cor: '#d97706' },
+  cofre: { lbl: 'Cofre (retirada do dono)', ico: '🏦', cor: '#dc2626' },
+  outro: { lbl: 'Outro', ico: '📦', cor: '#64748b' }
 }
 
-const SANG_LABEL = {
-  musico: '🎵 Músico / Banda',
-  extra: '💵 Extra / Freelancer',
-  vale: '🪙 Vale (adiantamento)',
-  cofre: '🏦 Cofre (dono)',
-  outro: '📦 Outro'
+const num = v => Number(v) || 0
+
+// ─── Normalização e catálogo ─────────────────────────────────────────────────
+const fold = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim()
+
+const CAT_NORM = (() => {
+  const m = {}
+  for (const [nome, v] of Object.entries(CATALOGO_PRODUTOS)) m[fold(nome)] = v
+  return m
+})()
+const CAT_KEYS = Object.keys(CAT_NORM)
+
+function precoProduto(nome) {
+  const f = fold(nome)
+  if (CAT_NORM[f]) return CAT_NORM[f].p || 0
+  // A TOTVS trunca nomes longos → casa por prefixo
+  let cands = CAT_KEYS.filter(k => k.startsWith(f))
+  if (cands.length) return Math.min(...cands.map(k => CAT_NORM[k].p || 0))
+  cands = CAT_KEYS.filter(k => f.startsWith(k))
+  if (cands.length) return CAT_NORM[cands.sort((a, b) => b.length - a.length)[0]].p || 0
+  return 0
 }
 
-const FORMA_LABEL = {
-  credito: 'Crédito', debito: 'Débito', pix: 'PIX', voucher: 'Voucher',
-  assinadas: 'Assinadas', ifood: 'iFood', dinheiro: 'Dinheiro', outras: 'Outras'
+const MUSICO_RE = /MUSIC[OA]|M.{0,3}SIC[OA]|BANDA|CANTOR|ARTISTA|SHOW AO VIVO|VOZ E VIOLAO|\bDJ\b/
+const DESPESA_RE = /COMPRA|MERCAD|MATERIAL|FICHA|BRINQUEDO|\bGAS\b|GELO|CARV[AO]|PADARIA|ACOUGUE|FEIRA|HORTI|BANANA|VERDUR|LEGUME|FRUTA|MANUTEN|CONSERTO|DESPESA|LIMPEZA|DESCART|EMBALAGEM/
+
+function classificaSangria(motivo) {
+  const f = fold(motivo)
+  if (MUSICO_RE.test(f)) return 'musico'
+  if (/^VALE\b/.test(f)) return 'vale'
+  if (/^EXTRA\b/.test(f)) return 'extra'
+  if (/COFRE|RETIRADA CAIXA|DONO|SOCIO|PROPRIETARIO/.test(f)) return 'cofre'
+  if (DESPESA_RE.test(f)) return 'despesa'
+  return 'outro'
 }
 
-const statusColor = (nivel) =>
-  ({ ok: { c: '#065f46', bg: '#d1fae5' }, warn: { c: '#92400e', bg: '#fef3c7' }, bad: { c: '#991b1b', bg: '#fee2e2' } }[nivel] || { c: '#374151', bg: '#f3f4f6' })
-
-// Primeiro e último dia do mês corrente, em ISO (YYYY-MM-DD).
-function defaultRange() {
-  const d = new Date()
-  const ini = new Date(d.getFullYear(), d.getMonth(), 1)
-  const fim = new Date(d.getFullYear(), d.getMonth() + 1, 0)
-  const iso = (x) => x.toISOString().slice(0, 10)
-  return [iso(ini), iso(fim)]
+// remove mojibake de encoding (cp850 lido errado) e normaliza espaços
+function limpa(s) {
+  return String(s || '').replace(/[ÃÂ][\x80-\xBF|,]?/g, '').replace(/[^\x20-\x7EÀ-ÿ]/g, '').replace(/\s+/g, ' ').trim()
 }
 
-function fmtDia(iso) {
-  if (!iso) return '—'
-  const [y, m, d] = iso.split('-')
-  return `${d}/${m}`
+// ─── Datas / semanas (segunda → domingo) ─────────────────────────────────────
+function isoOf(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 }
-
-function num(v) { return Number(v || 0) }
-
-// ─── Agregação ───────────────────────────────────────────────────────────────
-function aggregate(data) {
-  const resumo = data?.resumo || []
-  const nfce = data?.nfce || []
-  const cancelamentos = data?.cancelamentos || []
-  const sangrias = data?.sangrias || []
-
-  // Faturamento por dia (eletrônico + dinheiro lançado no TOTVS)
-  const porDia = {}
-  const addDia = (dia) => (porDia[dia] = porDia[dia] || { dia, faturamento: 0, dinheiro: 0, eletronico: 0, gorjeta: 0, cancel: 0, sangrias: 0 })
-
-  const formas = { credito: 0, debito: 0, pix: 0, voucher: 0, assinadas: 0, ifood: 0, dinheiro: 0, outras: 0 }
-  let totalFat = 0, totalElet = 0, totalDinheiro = 0, totalCancelVal = 0, totalCancelQtd = 0
-  let nFechamentos = 0
-  const sangPorTipo = { musico: 0, extra: 0, vale: 0, cofre: 0, outro: 0 }
-  let totalSangrias = 0
-  const concilCount = {}
-
-  for (const r of resumo) {
-    nFechamentos++
-    const d = addDia(r.data_turno)
-    const elet = num(r.total_eletronico)
-    const dinheiro = num(r.dinheiro_totvs)
-    d.eletronico += elet
-    d.dinheiro += dinheiro
-    d.faturamento += elet + dinheiro
-    d.cancel += num(r.cancelamentos_valor)
-    d.sangrias += num(r.sangrias_total)
-    totalElet += elet
-    totalDinheiro += dinheiro
-    totalFat += elet + dinheiro
-    formas.credito += num(r.credito)
-    formas.debito += num(r.debito)
-    formas.pix += num(r.pix)
-    formas.voucher += num(r.voucher)
-    formas.assinadas += num(r.assinadas)
-    formas.ifood += num(r.ifood)
-    formas.outras += num(r.outras_formas)
-    formas.dinheiro += dinheiro
-    sangPorTipo.musico += num(r.sangrias_musico)
-    sangPorTipo.extra += num(r.sangrias_extra)
-    sangPorTipo.vale += num(r.sangrias_vale)
-    sangPorTipo.cofre += num(r.sangrias_cofre)
-    sangPorTipo.outro += num(r.sangrias_outro)
-    totalSangrias += num(r.sangrias_total)
-    const st = r.conciliacao_status || 'sem_diferenca'
-    concilCount[st] = (concilCount[st] || 0) + 1
+function diaMovimento(fita) {
+  // data_turno já é o dia do movimento (abertura, com regra das 6h) calculado pelo agente
+  if (fita.data_turno) return String(fita.data_turno).slice(0, 10)
+  const ab = fita.abertura_dt || fita.fechamento_dt
+  if (ab) {
+    const d = new Date(ab)
+    if (d.getHours() < 6) d.setDate(d.getDate() - 1) // madrugada conta p/ dia anterior
+    return isoOf(d)
   }
+  return ''
+}
+function mondayOf(iso) {
+  const d = new Date(iso + 'T12:00:00')
+  const dow = (d.getDay() + 6) % 7
+  d.setDate(d.getDate() - dow)
+  return d
+}
+const fmtDM = d => String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0')
+const brDate = iso => { const [y, m, d] = String(iso).split('-'); return `${d}/${m}/${y}` }
 
-  // Gorjeta vem dos eventos NFC-e (não está no resumo)
-  let totalGorjeta = 0
-  for (const e of nfce) {
-    totalGorjeta += num(e.gorjeta)
-    const d = addDia(e.data_turno)
-    d.gorjeta += num(e.gorjeta)
+function construirSemanas(datas) {
+  const map = {}
+  datas.filter(Boolean).forEach(iso => {
+    const mon = mondayOf(iso)
+    const dom = new Date(mon); dom.setDate(dom.getDate() + 6)
+    map[isoOf(mon)] = { key: isoOf(mon), ini: isoOf(mon), fim: isoOf(dom), label: fmtDM(mon) + '–' + fmtDM(dom) }
+  })
+  return Object.values(map).sort((a, b) => a.ini < b.ini ? 1 : -1)
+}
+
+// ─── Preparação dos fechamentos (dedup + filtro do garçom) ───────────────────
+function fitasValidas(data) {
+  const fitas = (data?.fitas || [])
+  const vistos = {}
+  for (const f of fitas) {
+    const opAb = fold(f.operador_abertura)
+    const prods = f.produtos_vendidos?.categorias?.length || 0
+    if (opAb.startsWith('TERMINAL') || f.caixa_numero === 3) continue
+    if ((Number(f.entradas_total) || 0) === 0 && prods === 0) continue
+    const chave = `${f.caixa_numero}#${f.fech_numero}#${diaMovimento(f)}`
+    if (!vistos[chave] || prods > (vistos[chave].produtos_vendidos?.categorias?.length || 0)) vistos[chave] = f
   }
+  return Object.values(vistos).map(f => ({ ...f, _dia: diaMovimento(f) }))
+}
 
-  // Cancelamentos por classificação (usa motivo_editado/classificacao quando houver)
-  const cancelPorClasse = {}
-  for (const c of cancelamentos) {
-    totalCancelVal += num(c.valor)
-    totalCancelQtd++
-    const cl = c.classificacao || 'sem_classificacao'
-    if (!cancelPorClasse[cl]) cancelPorClasse[cl] = { valor: 0, qtd: 0 }
-    cancelPorClasse[cl].valor += num(c.valor)
-    cancelPorClasse[cl].qtd++
-  }
+function cancelDia(c) {
+  if (c.data_turno) return String(c.data_turno).slice(0, 10)
+  if (c.data_hora) { const d = new Date(c.data_hora); if (d.getHours() < 6) d.setDate(d.getDate() - 1); return isoOf(d) }
+  return ''
+}
 
-  const dias = Object.values(porDia).sort((a, b) => a.dia.localeCompare(b.dia))
+const inRange = (iso, filtro) => (!filtro.ini || iso >= filtro.ini) && (!filtro.fim || iso <= filtro.fim)
 
-  // Fita de fechamento (TOTVS) — conciliação oficial, pessoas e produtos
-  const fitas = data?.fitas || []
-  let totalPessoas = 0, totalTransacoes = 0, totalComissoes = 0, totalCortesias = 0, totalDescontos = 0
-  const concilPorForma = {}   // forma → { bordero, caixa, diff }
-  const categorias = {}       // cat.nome → { qtd, valor, recCatalogo }
-  const produtosRec = {}      // produto → { qtd, receita, preco, grupo }
+// ─── Agregação dinâmica conforme o filtro ────────────────────────────────────
+function agregar(data, filtro) {
+  const fitas = fitasValidas(data).filter(f => inRange(f._dia, filtro))
+  const cancel = (data?.cancelamentos || [])
+    .map(c => ({ ...c, _dia: cancelDia(c) }))
+    .filter(c => inRange(c._dia, filtro))
+    .sort((a, b) => (a.data_hora || '') < (b.data_hora || '') ? -1 : 1)
+
+  const t = { faturamento: 0, credito: 0, debito: 0, pix: 0, dinheiro: 0, comissoes: 0, cortesias: 0, assinadas: 0, descontos: 0, sangrias: 0, diferenca: 0, pessoas: 0, transacoes: 0 }
+  const st = {}; Object.keys(SANG).forEach(k => st[k] = 0)
+  const sangItens = [], cortItens = [], turnos = [], dias = {}
+  const prodMap = {}, grpMap = {}
 
   for (const f of fitas) {
-    totalPessoas += num(f.numero_pessoas)
-    totalTransacoes += num(f.qtde_transacoes_pos)
-    totalComissoes += num(f.comissoes_total)
-    totalCortesias += num(f.cortesias_total)
-    totalDescontos += num(f.descontos_total)
-    for (const c of (f.conciliacao || [])) {
-      const k = c.forma || '—'
-      if (!concilPorForma[k]) concilPorForma[k] = { bordero: 0, caixa: 0, diff: 0 }
-      concilPorForma[k].bordero += num(c.bordero)
-      concilPorForma[k].caixa += num(c.caixa)
-      concilPorForma[k].diff += num(c.diff)
+    const cred = num(f.bordero_credito) || num(f.entradas_credito)
+    const deb = num(f.bordero_debito) || num(f.entradas_debito)
+    const pix = num(f.bordero_pix) || num(f.entradas_pix)
+    const din = num(f.entradas_dinheiro)
+    const fat = cred + deb + pix + din
+    t.faturamento += fat; t.credito += cred; t.debito += deb; t.pix += pix; t.dinheiro += din
+    t.comissoes += num(f.comissoes_total); t.cortesias += num(f.cortesias_total); t.assinadas += num(f.assinadas_total)
+    t.descontos += num(f.descontos_total); t.sangrias += num(f.sangrias_total); t.diferenca += num(f.diferenca_total)
+    t.pessoas += num(f.numero_pessoas); t.transacoes += num(f.qtde_transacoes_pos)
+
+    const dia = f._dia
+    dias[dia] = dias[dia] || { fat: 0, com: 0 }
+    dias[dia].fat += fat; dias[dia].com += num(f.comissoes_total)
+
+    for (const s of (f.sangrias || [])) {
+      const desc = limpa(s.descricao || s.nome)
+      const tipo = classificaSangria(s.descricao || s.nome)
+      st[tipo] += num(s.valor)
+      sangItens.push({ dia, tipo, desc, valor: num(s.valor) })
     }
-    const pv = f.produtos_vendidos || {}
-    for (const cat of (pv.categorias || [])) {
-      const catNome = cat.nome || '—'
-      if (!categorias[catNome]) categorias[catNome] = { qtd: 0, valor: 0, recCatalogo: 0 }
-      categorias[catNome].qtd += num(cat.subtotal_qtde)
-      categorias[catNome].valor += num(cat.subtotal_valor)
+    for (const c of (f.cortesias || [])) {
+      cortItens.push({ dia, nome: limpa(c.nome), desc: limpa(c.descricao), valor: num(c.valor) })
+    }
+    for (const cat of (f.produtos_vendidos?.categorias || [])) {
       for (const it of (cat.itens || [])) {
-        const nome = it.produto
-        const qtd = num(it.qtde)
-        const entry = CATALOGO_PRODUTOS[nome]
-        const preco = entry?.p || 0
-        const receita = preco > 0 ? qtd * preco : 0
-        const grupo = entry?.g || catNome
-        if (!produtosRec[nome]) produtosRec[nome] = { qtd: 0, receita: 0, preco, grupo }
-        produtosRec[nome].qtd += qtd
-        produtosRec[nome].receita += receita
-        categorias[catNome].recCatalogo += receita
+        const valor = (it.qtde || 0) * precoProduto(it.produto)
+        const k = it.produto
+        ;(prodMap[k] = prodMap[k] || { nome: it.produto, grupo: cat.nome, qtde: 0, valor: 0 })
+        prodMap[k].qtde += (it.qtde || 0); prodMap[k].valor += valor
+        ;(grpMap[cat.nome] = grpMap[cat.nome] || { nome: cat.nome, qtde: 0, valor: 0 })
+        grpMap[cat.nome].qtde += (it.qtde || 0); grpMap[cat.nome].valor += valor
       }
     }
+    turnos.push({
+      dia, data_br: brDate(dia), operador: f.operador_fechamento || f.operador_abertura || '—',
+      faturamento: fat, comissoes: num(f.comissoes_total), sangrias: num(f.sangrias_total),
+      pessoas: num(f.numero_pessoas), ticket: f.numero_pessoas ? fat / f.numero_pessoas : 0, diferenca: num(f.diferenca_total)
+    })
   }
-  const ticketPessoa = totalPessoas > 0 ? a_div(totalFat, totalPessoas) : 0
-  const ticketTransacao = totalTransacoes > 0 ? a_div(totalFat, totalTransacoes) : 0
-
+  turnos.sort((a, b) => a.dia < b.dia ? -1 : 1)
   return {
-    dias, formas, sangPorTipo, cancelPorClasse, concilCount,
-    totalFat, totalElet, totalDinheiro, totalGorjeta,
-    totalCancelVal, totalCancelQtd, totalSangrias, nFechamentos,
-    cancelamentos, sangrias,
-    fitas, totalPessoas, totalTransacoes, totalComissoes, totalCortesias, totalDescontos,
-    concilPorForma, categorias, produtosRec, ticketPessoa, ticketTransacao
+    t, st, sangItens, cortItens, turnos, cancel,
+    dias: Object.keys(dias).sort().map(d => ({ dia: d, data_br: brDate(d), ...dias[d] })),
+    prod: Object.values(prodMap), grp: Object.values(grpMap)
   }
 }
 
-function a_div(a, b) { return b ? a / b : 0 }
-
-// ─── Gráfico de barras (canvas, vanilla) ─────────────────────────────────────
-function drawBars(canvasId, labels, vals, color) {
-  const cv = document.getElementById(canvasId)
-  if (!cv) return
-  const W = cv.parentElement.clientWidth || 600
-  const H = cv.height
-  cv.width = W
-  const ctx = cv.getContext('2d')
-  ctx.clearRect(0, 0, W, H)
-  if (!labels.length) {
-    ctx.fillStyle = '#9099a6'; ctx.font = '13px Inter'; ctx.textAlign = 'center'
-    ctx.fillText('Sem dados no período', W / 2, H / 2)
-    return
-  }
-  const pl = 56, pr = 14, pt = 18, pb = 30
-  const gW = W - pl - pr, gH = H - pt - pb
-  let mx = 0
-  for (const v of vals) if (v > mx) mx = v
-  mx = mx * 1.15 || 1
-  const bW = Math.max(14, (gW / labels.length) * 0.6)
-  ctx.strokeStyle = '#eceff6'; ctx.lineWidth = 1
-  for (let i = 0; i <= 4; i++) {
-    const v = mx * i / 4, y = pt + gH - gH * i / 4
-    ctx.beginPath(); ctx.moveTo(pl, y); ctx.lineTo(pl + gW, y); ctx.stroke()
-    ctx.fillStyle = '#9099a6'; ctx.font = '10px Inter'; ctx.textAlign = 'right'
-    ctx.fillText(v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v.toFixed(0), pl - 5, y + 3)
-  }
-  for (let i = 0; i < labels.length; i++) {
-    const x = pl + (i + 0.5) * gW / labels.length
-    const bH = gH * vals[i] / mx
-    const bX = x - bW / 2, bY = pt + gH - bH
-    const grad = ctx.createLinearGradient(0, bY, 0, pt + gH)
-    grad.addColorStop(0, color); grad.addColorStop(1, color + 'aa')
-    ctx.fillStyle = grad
-    ctx.beginPath()
-    if (ctx.roundRect) ctx.roundRect(bX, bY, bW, bH, [4, 4, 0, 0]); else ctx.rect(bX, bY, bW, bH)
-    ctx.fill()
-    const vs = vals[i] >= 1000 ? (vals[i] / 1000).toFixed(1) + 'k' : vals[i].toFixed(0)
-    ctx.fillStyle = '#4b5563'; ctx.font = 'bold 10px Inter'; ctx.textAlign = 'center'
-    if (bH > 16) ctx.fillText(vs, x, bY + 12); else if (vals[i] > 0) ctx.fillText(vs, x, bY - 4)
-    ctx.fillStyle = '#9099a6'; ctx.font = '10px Inter'
-    if (labels.length <= 31) ctx.fillText(labels[i], x, pt + gH + 13)
-  }
+// ─── Componentes visuais ─────────────────────────────────────────────────────
+function kpi(lbl, val, cls, sub, key) {
+  return `<button class="adash-kpi${key ? ' click' : ''}${dashDrillKey === key ? ' sel' : ''}"
+    ${key ? `onclick="window.__dashboard.drill('${key}')"` : 'disabled'}>
+    <span class="k-lbl">${esc(lbl)}</span>
+    <span class="k-val ${cls || ''}">${val}</span>
+    ${sub ? `<span class="k-sub">${esc(sub)}</span>` : ''}
+    ${key ? '<span class="k-go">ver detalhes ▾</span>' : ''}</button>`
 }
 
-// Barra horizontal proporcional (forma de pagamento, classificação, etc.)
-function barRow(label, valor, max, color) {
-  const pct = max > 0 ? (valor / max) * 100 : 0
-  return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-    <div style="width:130px;font-size:12.5px;color:#4b5563;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</div>
-    <div style="flex:1;background:#eef1f6;border-radius:6px;height:9px;overflow:hidden">
-      <div style="height:9px;border-radius:6px;width:${pct.toFixed(1)}%;background:${color}"></div>
-    </div>
-    <div style="width:104px;text-align:right;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;flex-shrink:0">${money(valor)}</div>
-  </div>`
+function barras(itens, fmt) {
+  if (!itens.length) return `<div class="adash-vazio">Sem dados no período</div>`
+  const m = Math.max(1, ...itens.map(i => i.valor))
+  return `<div class="adash-bars">` + itens.map(i => `
+    <div class="b-row"><div class="b-name" title="${esc(i.nome)}">${esc(i.nome)}</div>
+      <div class="b-track"><div class="b-fill" style="width:${Math.max(2, 100 * i.valor / m)}%;background:${i.cor || 'var(--brand)'}"></div></div>
+      <div class="b-val">${(fmt || money)(i.valor)}</div></div>`).join('') + `</div>`
 }
 
-function kpi(label, valor, cor, sub) {
-  return `<div class="summary">
-    <small>${esc(label)}</small>
-    <strong style="${cor ? `color:${cor}` : ''}">${valor}</strong>
-    ${sub ? `<div style="margin-top:4px;font-size:11px;color:#9099a6;font-weight:600">${esc(sub)}</div>` : ''}
-  </div>`
+function tabela(cols, rows, vazio) {
+  if (!rows.length) return `<div class="adash-vazio">${esc(vazio || 'Sem registros')}</div>`
+  const head = cols.map(c => `<th class="${c.num ? 'num' : ''}">${esc(c.t)}</th>`).join('')
+  const body = rows.map(r => '<tr>' + r.map((c, i) =>
+    `<td class="${cols[i].num ? 'num' : ''}">${c}</td>`).join('') + '</tr>').join('')
+  return `<div class="adash-tablewrap"><table class="adash-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`
+}
+
+function section(title, inner, extra) {
+  return `<div class="adash-sec"><h4>${title}${extra ? `<span class="sec-extra">${extra}</span>` : ''}</h4>${inner}</div>`
 }
 
 // ─── Views ───────────────────────────────────────────────────────────────────
 function viewGeral(a) {
-  const melhorDia = a.dias.slice().sort((x, y) => y.faturamento - x.faturamento)[0]
-  const ticketCards = a.fitas.length
-    ? [
-        kpi('Ticket / pessoa', money(a.ticketPessoa), 'var(--blue)', `${a.totalPessoas} pessoa(s)`),
-        kpi('Ticket / transação POS', money(a.ticketTransacao), 'var(--text)', `${a.totalTransacoes} transação(ões)`)
-      ].join('')
-    : ''
-  const cards = [
-    kpi('Faturamento', money(a.totalFat), 'var(--blue)', `${a.nFechamentos} fechamento(s)`),
-    kpi('Gorjeta (serviço)', money(a.totalGorjeta), 'var(--ok)'),
-    kpi('Cancelamentos', money(a.totalCancelVal), 'var(--bad)', `${a.totalCancelQtd} item(ns)`),
-    kpi('Sangrias', money(a.totalSangrias), '#7c3aed'),
-    kpi('Dinheiro (gaveta)', money(a.totalDinheiro), 'var(--text)'),
-    kpi('Eletrônico', money(a.totalElet), 'var(--text)'),
-    kpi('Melhor dia', melhorDia ? fmtDia(melhorDia.dia) : '—', 'var(--blue)', melhorDia ? money(melhorDia.faturamento) : '')
-  ].join('')
+  const t = a.t
+  const ticket = t.pessoas ? t.faturamento / t.pessoas : 0
+  const totCancel = a.cancel.reduce((s, c) => s + num(c.valor), 0)
+  const nCat = Object.keys(SANG).filter(k => a.st[k] > 0).length
+  const kpis = `<div class="adash-kpis">` +
+    kpi('Faturamento', money(t.faturamento), 'green') +
+    kpi('Comissão (garçons)', money(t.comissoes), 'gold', '', 'comissao') +
+    kpi('Sangrias', money(t.sangrias), 'red', nCat + ' categorias', 'sangrias') +
+    kpi('Cancelamentos', money(totCancel), 'red', a.cancel.length + ' lançamentos', 'cancel') +
+    kpi('Cortesias', money(t.cortesias), 'purple', '', 'cortesias') +
+    kpi('Nº de pessoas', t.pessoas, 'blue') +
+    kpi('Ticket médio', money(ticket)) +
+    kpi('Diferença de caixa', money(t.diferenca), t.diferenca < 0 ? 'red' : 'green') +
+    `</div>`
 
-  const consolidado = a.dias.length
-    ? `<div class="table" style="margin-top:14px"><table>
-        <thead><tr><th>Dia</th><th class="num">Faturamento</th><th class="num">Eletrônico</th><th class="num">Dinheiro</th><th class="num">Gorjeta</th><th class="num">Cancel.</th><th class="num">Sangrias</th></tr></thead>
-        <tbody>${a.dias.map(d => `<tr>
-          <td><b>${fmtDia(d.dia)}</b></td>
-          <td class="num">${money(d.faturamento)}</td>
-          <td class="num">${money(d.eletronico)}</td>
-          <td class="num">${money(d.dinheiro)}</td>
-          <td class="num" style="color:var(--ok)">${money(d.gorjeta)}</td>
-          <td class="num" style="color:var(--bad)">${money(d.cancel)}</td>
-          <td class="num" style="color:#7c3aed">${money(d.sangrias)}</td>
-        </tr>`).join('')}</tbody>
-        <tfoot><tr style="font-weight:800;background:#f5f7fb">
-          <td>TOTAL</td>
-          <td class="num">${money(a.totalFat)}</td>
-          <td class="num">${money(a.totalElet)}</td>
-          <td class="num">${money(a.totalDinheiro)}</td>
-          <td class="num" style="color:var(--ok)">${money(a.totalGorjeta)}</td>
-          <td class="num" style="color:var(--bad)">${money(a.totalCancelVal)}</td>
-          <td class="num" style="color:#7c3aed">${money(a.totalSangrias)}</td>
-        </tr></tfoot>
-      </table></div>`
-    : `<div class="alert blue" style="margin-top:14px">Nenhum fechamento salvo neste período.</div>`
+  const formas = [
+    { nome: '💳 Crédito', valor: t.credito, cor: '#2563eb' },
+    { nome: '💳 Débito', valor: t.debito, cor: '#7c3aed' },
+    { nome: '📱 PIX', valor: t.pix, cor: '#16a34a' },
+    { nome: '💵 Dinheiro', valor: t.dinheiro, cor: '#d97706' }
+  ].filter(f => f.valor > 0)
 
-  return `<div class="grid g3">${cards}${ticketCards}</div>
-    <div class="dash-sec"><h4>Faturamento por dia</h4><canvas id="dashCvFat" height="190"></canvas></div>
-    ${consolidado}`
-}
+  const resumo = tabela(
+    [{ t: 'Item' }, { t: 'Valor', num: true }],
+    [
+      ['Cartão de crédito', money(t.credito)], ['Cartão de débito', money(t.debito)],
+      ['PIX', money(t.pix)], ['Dinheiro', money(t.dinheiro)],
+      ['<b>Faturamento total</b>', `<b>${money(t.faturamento)}</b>`],
+      ['Comissão (gorjeta)', money(t.comissoes)], ['Descontos concedidos', money(t.descontos)],
+      ['Cortesias', money(t.cortesias)], ['Contas assinadas', money(t.assinadas)],
+      ['Transações na maquininha', String(t.transacoes)]
+    ]
+  )
 
-function viewFormas(a) {
-  const entries = Object.entries(a.formas).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1])
-  const max = entries.length ? entries[0][1] : 0
-  const total = entries.reduce((s, [, v]) => s + v, 0)
-  if (!entries.length) return `<div class="alert blue">Sem formas de pagamento no período.</div>`
-  const bars = entries.map(([k, v]) =>
-    barRow(`${FORMA_LABEL[k] || k} · ${total > 0 ? ((v / total) * 100).toFixed(1) : 0}%`, v, max,
-      k === 'dinheiro' ? '#16a34a' : k === 'pix' ? '#0891b2' : 'var(--blue)')).join('')
-  return `<div class="dash-sec"><h4>Faturamento por forma de pagamento — ${money(total)}</h4>${bars}</div>`
-}
-
-function viewCancel(a) {
-  const entries = Object.entries(a.cancelPorClasse).sort((x, y) => y[1].valor - x[1].valor)
-  const max = entries.length ? entries[0][1].valor : 0
-  const total = a.totalCancelVal
-  const bars = entries.length
-    ? entries.map(([k, o]) =>
-        barRow(`${CLASS_LABEL[k] || k} (${o.qtd})`, o.valor, max, 'var(--bad)')).join('')
-    : '<div class="alert blue">Nenhum cancelamento no período.</div>'
-
-  // Lista detalhada (até 200 linhas — restaurante pequeno)
-  const rows = (a.cancelamentos || []).slice(0, 200).map(c => {
-    const motivo = c.motivo_editado || c.motivo || '—'
-    const cl = c.classificacao ? `<span class="chip">${esc(CLASS_LABEL[c.classificacao] || c.classificacao)}</span>` : '<span style="color:#bbb">—</span>'
-    return `<tr>
-      <td>${esc(fmtDia(c.data_turno))}</td>
-      <td>${esc(c.produto || '—')}</td>
-      <td class="num">${money(c.valor)}</td>
-      <td style="font-size:12px;color:#555">${esc(motivo)}</td>
-      <td>${cl}</td>
-      <td style="font-size:12px">${esc(c.operador || '—')}</td>
-    </tr>`
-  }).join('')
-
-  return `<div class="dash-sec"><h4>Cancelamentos por classificação — ${money(total)}</h4>${bars}</div>
-    <div class="table" style="margin-top:14px"><table>
-      <thead><tr><th>Dia</th><th>Produto</th><th class="num">Valor</th><th>Motivo</th><th>Classificação</th><th>Operador</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="6" style="text-align:center;color:#bbb;padding:18px">Nenhum registro</td></tr>'}</tbody>
-    </table></div>`
-}
-
-function viewSangrias(a) {
-  const entries = Object.entries(a.sangPorTipo).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1])
-  const max = entries.length ? entries[0][1] : 0
-  const bars = entries.length
-    ? entries.map(([k, v]) => barRow(SANG_LABEL[k] || k, v, max, k === 'cofre' ? '#b91c1c' : '#7c3aed')).join('')
-    : '<div class="alert blue">Nenhuma sangria no período.</div>'
-
-  const cofre = (a.sangrias || []).filter(s => s.tipo === 'cofre')
-  const cofreTotal = cofre.reduce((s, x) => s + num(x.valor), 0)
-  const cofreBox = cofre.length
-    ? `<div class="dash-sec" style="border-left:3px solid #b91c1c">
-        <h4>🏦 Retiradas de cofre — ${money(cofreTotal)}</h4>
-        <div class="table"><table>
-          <thead><tr><th>Dia</th><th>Motivo</th><th>Operador</th><th class="num">Valor</th></tr></thead>
-          <tbody>${cofre.map(s => `<tr>
-            <td>${esc(fmtDia(s.data_turno))}</td>
-            <td style="font-size:12px">${esc(s.motivo || '—')}</td>
-            <td style="font-size:12px">${esc(s.operador || '—')}</td>
-            <td class="num" style="color:#b91c1c">${money(s.valor)}</td>
-          </tr>`).join('')}</tbody>
-        </table></div>
-      </div>`
-    : ''
-
-  const rows = (a.sangrias || []).slice(0, 200).map(s => `<tr>
-    <td>${esc(fmtDia(s.data_turno))}</td>
-    <td><span class="chip">${esc((SANG_LABEL[s.tipo] || s.tipo || 'outro'))}</span></td>
-    <td style="font-size:12px;color:#555">${esc(s.motivo || '—')}</td>
-    <td style="font-size:12px">${esc(s.operador || '—')}</td>
-    <td class="num">${money(s.valor)}</td>
-  </tr>`).join('')
-
-  return `<div class="dash-sec"><h4>Sangrias por tipo — ${money(a.totalSangrias)}</h4>${bars}</div>
-    ${cofreBox}
-    <div class="table" style="margin-top:14px"><table>
-      <thead><tr><th>Dia</th><th>Tipo</th><th>Motivo</th><th>Operador</th><th class="num">Valor</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="5" style="text-align:center;color:#bbb;padding:18px">Nenhum registro</td></tr>'}</tbody>
-    </table></div>`
-}
-
-function viewConcil(a) {
-  const entries = Object.entries(a.concilCount).sort((x, y) => y[1] - x[1])
-  if (!entries.length) return `<div class="alert blue">Nenhum fechamento no período.</div>`
-  const cards = entries.map(([st, qtd]) => {
-    const info = STATUS[st] || { label: st, nivel: 'warn' }
-    const cs = statusColor(info.nivel)
-    return `<div class="summary">
-      <small>${esc(info.label)}</small>
-      <strong style="color:${cs.c}">${qtd}</strong>
-      <div style="margin-top:6px"><span class="chip" style="color:${cs.c};background:${cs.bg};border-color:transparent">${esc(info.label)}</span></div>
-    </div>`
-  }).join('')
-  const okN = (a.concilCount.sem_diferenca || 0) + (a.concilCount.tolerada || 0) + (a.concilCount.aprovada || 0)
-  const pct = a.nFechamentos > 0 ? ((okN / a.nFechamentos) * 100).toFixed(0) : 0
-  return `<div class="alert ok" style="margin-bottom:14px">
-      <b>${pct}% dos fechamentos sem pendência.</b> ${okN} de ${a.nFechamentos} ficaram sem diferença, dentro da tolerância ou com ciência do gerente.
-    </div>
-    <div class="grid g3">${cards}</div>`
-}
-
-function viewTotvs(a) {
-  if (!a.fitas.length) {
-    return `<div class="alert warn">
-      <b>Nenhuma fita TOTVS recebida neste período.</b>
-      O agente Windows precisa estar na versão mais recente para enviar o fechamento ao Supabase.
-      Após atualizar o agente, os dados aparecem aqui automaticamente.
-    </div>`
-  }
-  const concilEntries = Object.entries(a.concilPorForma).sort((x, y) => Math.abs(y[1].diff) - Math.abs(x[1].diff))
-  const totalBordero = concilEntries.reduce((s, [, v]) => s + v.bordero, 0)
-  const totalCaixa = concilEntries.reduce((s, [, v]) => s + v.caixa, 0)
-  const totalDiff = concilEntries.reduce((s, [, v]) => s + v.diff, 0)
-  const concilRows = concilEntries.map(([forma, o]) => {
-    const ok = Math.abs(o.diff) < 0.05
-    const diffColor = ok ? '#16a34a' : o.diff > 0 ? '#16a34a' : '#dc2626'
-    const diffSign = o.diff > 0.005 ? '+' : ''
-    return `<tr>
-      <td>${esc(forma)}</td>
-      <td class="num">${money(o.bordero)}</td>
-      <td class="num">${money(o.caixa)}</td>
-      <td class="num" style="color:${diffColor};font-weight:700">${diffSign}${money(o.diff)}</td>
-    </tr>`
-  }).join('')
-  const diffColor = Math.abs(totalDiff) < 0.10 ? '#16a34a' : '#dc2626'
-  const kpis = [
-    kpi('Comissões', money(a.totalComissoes), '#7c3aed', `${a.fitas.length} fita(s)`),
-    kpi('Cortesias', money(a.totalCortesias), '#0891b2'),
-    kpi('Descontos', money(a.totalDescontos), '#ea580c'),
-    kpi('Diferença acumulada', money(Math.abs(totalDiff)), diffColor,
-      Math.abs(totalDiff) < 0.10 ? 'Zerado' : totalDiff > 0 ? 'Sobra no borderô' : 'Falta no borderô')
-  ].join('')
-  return `<div class="grid g3" style="margin-bottom:14px">${kpis}</div>
-    <div class="dash-sec">
-      <h4>Conciliação TOTVS — Borderô vs Caixa (${a.fitas.length} fita(s))</h4>
-      <div class="table"><table>
-        <thead><tr><th>Forma</th><th class="num">Borderô (TOTVS)</th><th class="num">Caixa (PWA)</th><th class="num">Diferença</th></tr></thead>
-        <tbody>${concilRows || '<tr><td colspan="4" style="text-align:center;color:#bbb;padding:18px">Sem dados</td></tr>'}</tbody>
-        <tfoot><tr style="font-weight:800;background:#f5f7fb">
-          <td>TOTAL</td>
-          <td class="num">${money(totalBordero)}</td>
-          <td class="num">${money(totalCaixa)}</td>
-          <td class="num" style="color:${diffColor};font-weight:800">${money(totalDiff)}</td>
-        </tr></tfoot>
-      </table></div>
-    </div>`
+  return kpis + drillPanel(a) + `<div class="adash-grid2">
+      ${section('Faturamento por forma', barras(formas))}
+      ${section('Faturamento por dia', barras(a.dias.map(d => ({ nome: d.data_br, valor: d.fat, cor: 'var(--ok)' }))))}
+    </div>` + section('Resumo financeiro consolidado', resumo)
 }
 
 function viewProdutos(a) {
-  if (!a.fitas.length) {
-    return `<div class="alert warn">
-      <b>Nenhuma fita TOTVS recebida neste período.</b>
-      Atualize o agente Windows para começar a receber o detalhamento de produtos.
-    </div>`
-  }
-
-  // ── KPIs ─────────────────────────────────────────────────────────────────
-  const prodList = Object.values(a.produtosRec)
-  const totalRecCat = prodList.reduce((s, p) => s + p.receita, 0)
-  const totalQtdGeral = prodList.reduce((s, p) => s + p.qtd, 0)
-  const comPreco = prodList.filter(p => p.preco > 0).length
-  const totalProdos = prodList.length
-  const coverage = totalProdos > 0 ? ((comPreco / totalProdos) * 100).toFixed(0) : 0
-  const ticketItem = totalQtdGeral > 0 ? totalRecCat / totalQtdGeral : 0
-  const kpis = [
-    kpi('Receita estimada', money(totalRecCat), 'var(--blue)', 'qtde × preço cardápio'),
-    kpi('Itens vendidos', totalQtdGeral.toLocaleString('pt-BR'), 'var(--text)'),
-    kpi('Ticket / item', money(ticketItem), 'var(--text)'),
-    kpi('Cobertura catálogo', `${coverage}%`, Number(coverage) >= 80 ? 'var(--ok)' : '#ea580c',
-      `${comPreco} de ${totalProdos} produtos`)
-  ].join('')
-
-  // ── Categorias (usa valor TOTVS se disponível, senão estimativa catálogo) ─
-  const catColors = ['#2563eb', '#0891b2', '#7c3aed', '#ea580c', '#16a34a', '#db2777', '#d97706', '#be185d']
-  const catEntries = Object.entries(a.categorias)
-    .map(([nome, o]) => [nome, { ...o, exibir: o.valor > 0 ? o.valor : o.recCatalogo }])
-    .filter(([, o]) => o.exibir > 0 || o.qtd > 0)
-    .sort((x, y) => y[1].exibir - x[1].exibir)
-  const maxCat = catEntries.length ? catEntries[0][1].exibir : 0
-  const totalCatValor = catEntries.reduce((s, [, o]) => s + o.exibir, 0)
-  const catBars = catEntries.length
-    ? catEntries.map(([nome, o], i) => {
-        const pct = totalCatValor > 0 ? ((o.exibir / totalCatValor) * 100).toFixed(1) : 0
-        const label = `${nome} · ${o.qtd} unid. · ${pct}%`
-        return barRow(label, o.exibir, maxCat, catColors[i % catColors.length])
-      }).join('')
-    : '<div class="alert blue">Sem categorias no período.</div>'
-
-  // ── Top 20 por receita estimada ──────────────────────────────────────────
-  const topRec = Object.entries(a.produtosRec)
-    .filter(([, p]) => p.receita > 0)
-    .sort((x, y) => y[1].receita - x[1].receita)
-    .slice(0, 20)
-  const maxRec = topRec.length ? topRec[0][1].receita : 0
-  const recRows = topRec.map(([nome, p], i) => `<tr>
-    <td style="font-size:11px;color:#9099a6;width:24px">${i + 1}</td>
-    <td style="font-size:12.5px">${esc(nome)}</td>
-    <td style="font-size:11px;color:#9099a6">${esc(p.grupo)}</td>
-    <td class="num" style="width:54px;font-weight:700">${p.qtd}</td>
-    <td class="num" style="width:80px;color:#6b7280">${money(p.preco)}</td>
-    <td class="num" style="width:96px;font-weight:800;color:#2563eb">${money(p.receita)}</td>
-    <td style="width:100px;padding-left:8px">
-      <div style="height:6px;border-radius:3px;background:#e5e7eb;overflow:hidden">
-        <div style="height:6px;border-radius:3px;background:#2563eb;width:${maxRec > 0 ? ((p.receita / maxRec) * 100).toFixed(1) : 0}%"></div>
-      </div>
-    </td>
-  </tr>`).join('')
-
-  // ── Top 20 por quantidade ────────────────────────────────────────────────
-  const topQtd = Object.entries(a.produtosRec)
-    .sort((x, y) => y[1].qtd - x[1].qtd)
-    .slice(0, 20)
-  const maxQtd = topQtd.length ? topQtd[0][1].qtd : 0
-  const qtdRows = topQtd.map(([nome, p], i) => `<tr>
-    <td style="font-size:11px;color:#9099a6;width:24px">${i + 1}</td>
-    <td style="font-size:12.5px">${esc(nome)}</td>
-    <td class="num" style="font-weight:800;width:64px">${p.qtd}</td>
-    <td class="num" style="color:#6b7280;width:90px">${p.receita > 0 ? money(p.receita) : '<span style="color:#d1d5db">—</span>'}</td>
-    <td style="width:120px;padding-left:8px">
-      <div style="height:6px;border-radius:3px;background:#e5e7eb;overflow:hidden">
-        <div style="height:6px;border-radius:3px;background:#0891b2;width:${maxQtd > 0 ? ((p.qtd / maxQtd) * 100).toFixed(1) : 0}%"></div>
-      </div>
-    </td>
-  </tr>`).join('')
-
-  return `
-    <div class="grid g3" style="margin-bottom:16px">${kpis}</div>
-
-    <div class="dash-sec">
-      <h4>Faturamento por categoria</h4>
-      <div class="hint" style="margin-bottom:10px">Fonte: TOTVS (fita de fechamento). Percentual em relação ao total de produtos vendidos.</div>
-      ${catBars}
-    </div>
-
-    <div class="dash-sec" style="margin-top:14px">
-      <h4>Top 20 por receita estimada</h4>
-      <div class="hint" style="margin-bottom:8px">Calculado como quantidade × preço de venda do cardápio.</div>
-      <div class="table"><table>
-        <thead><tr><th>#</th><th>Produto</th><th>Categoria</th><th class="num">Qtde</th><th class="num">Preço unit.</th><th class="num">Receita est.</th><th>Proporção</th></tr></thead>
-        <tbody>${recRows || '<tr><td colspan="7" style="text-align:center;color:#bbb;padding:18px">Nenhum produto com preço no catálogo</td></tr>'}</tbody>
-      </table></div>
-    </div>
-
-    <div class="dash-sec" style="margin-top:14px">
-      <h4>Top 20 por quantidade vendida</h4>
-      <div class="table"><table>
-        <thead><tr><th>#</th><th>Produto</th><th class="num">Qtde</th><th class="num">Receita est.</th><th>Proporção</th></tr></thead>
-        <tbody>${qtdRows || '<tr><td colspan="5" style="text-align:center;color:#bbb;padding:18px">Nenhum produto</td></tr>'}</tbody>
-      </table></div>
-    </div>`
+  const prod = a.prod.slice().sort((x, y) => y.valor - x.valor)
+  const qT = prod.reduce((s, p) => s + p.qtde, 0)
+  const vT = prod.reduce((s, p) => s + p.valor, 0)
+  const campeao = prod.slice().sort((x, y) => y.qtde - x.qtde)[0] || { nome: '—', qtde: 0 }
+  const kpis = `<div class="adash-kpis">` +
+    kpi('Itens vendidos', qT, 'blue') +
+    kpi('Faturamento em produtos', money(vT), 'green') +
+    kpi('Produtos distintos', prod.length) +
+    kpi('Campeão de vendas', campeao.nome, 'gold', campeao.qtde + ' un') + `</div>`
+  const top = prod.slice(0, 12).map(p => ({ nome: p.nome, valor: p.valor }))
+  const grp = a.grp.slice().sort((x, y) => y.valor - x.valor).map(g => ({ nome: g.nome, valor: g.valor, cor: '#ea580c' }))
+  const tbl = tabela([{ t: 'Produto' }, { t: 'Grupo' }, { t: 'Qtde', num: true }, { t: 'R$ total', num: true }],
+    prod.map(p => [esc(p.nome), esc(p.grupo), String(p.qtde), money(p.valor)]), 'Sem produtos no período')
+  return kpis + `<div class="adash-grid2">
+      ${section('🏆 Top 12 por faturamento', barras(top))}
+      ${section('Faturamento por grupo', barras(grp))}
+    </div>` +
+    section('Todos os produtos', `<input class="adash-busca" id="adashBusca" placeholder="🔎 Buscar produto..."
+      oninput="window.__dashboard.filtraProd(this.value)">${tbl}`)
 }
 
-// ─── Insights automáticos ────────────────────────────────────────────────────
-function viewInsights(a) {
-  const ins = []
-  const pct1 = (v, t) => t > 0 ? ((v / t) * 100).toFixed(1) : '0'
-
-  // Melhor e pior dia
-  if (a.dias.length >= 2) {
-    const sorted = a.dias.slice().sort((x, y) => y.faturamento - x.faturamento)
-    const melhor = sorted[0], pior = sorted[sorted.length - 1]
-    ins.push({ nivel: 'ok',
-      titulo: `Melhor dia: ${fmtDia(melhor.dia)} — ${money(melhor.faturamento)}`,
-      texto: `O pior dia foi ${fmtDia(pior.dia)} com ${money(pior.faturamento)}. Variação de ${pct1(melhor.faturamento - pior.faturamento, melhor.faturamento)}% entre os extremos.` })
-  }
-
-  // Ticket por pessoa
-  if (a.totalPessoas > 0) {
-    const nivel = a.ticketPessoa >= 90 ? 'ok' : a.ticketPessoa >= 60 ? 'blue' : 'warn'
-    ins.push({ nivel,
-      titulo: `Ticket médio: ${money(a.ticketPessoa)} / pessoa`,
-      texto: `${a.totalPessoas} pessoas atendidas, ${money(a.totalFat)} de faturamento total. Transações POS: ${a.totalTransacoes}.` })
-  }
-
-  // Forma de pagamento dominante
-  const formaTotal = Object.values(a.formas).reduce((s, v) => s + v, 0)
-  if (formaTotal > 0) {
-    const top2 = Object.entries(a.formas).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1]).slice(0, 2)
-    if (top2.length) {
-      const [k1, v1] = top2[0]
-      ins.push({ nivel: 'blue',
-        titulo: `Forma dominante: ${FORMA_LABEL[k1] || k1} (${pct1(v1, formaTotal)}%)`,
-        texto: `${money(v1)} dos ${money(formaTotal)} faturados. ` +
-          (top2[1] ? `Segunda maior: ${FORMA_LABEL[top2[1][0]] || top2[1][0]} com ${pct1(top2[1][1], formaTotal)}%.` : '') })
-    }
-  }
-
-  // Produto mais lucrativo e mais vendido
-  const prodRec = Object.entries(a.produtosRec)
-  if (prodRec.length > 0) {
-    const topR = prodRec.filter(([, p]) => p.receita > 0).sort((x, y) => y[1].receita - x[1].receita)[0]
-    const topQ = prodRec.sort((x, y) => y[1].qtd - x[1].qtd)[0]
-    if (topR) ins.push({ nivel: 'ok',
-      titulo: `Produto mais lucrativo: ${topR[0]}`,
-      texto: `${topR[1].qtd} unidades × ${money(topR[1].preco)} = ${money(topR[1].receita)} estimados no período.` })
-    if (topQ && topQ[0] !== topR?.[0]) ins.push({ nivel: 'blue',
-      titulo: `Produto mais pedido: ${topQ[0]}`,
-      texto: `${topQ[1].qtd} unidades vendidas. Receita estimada: ${topQ[1].receita > 0 ? money(topQ[1].receita) : 'não calculada (sem preço no catálogo)'}.` })
-  }
-
-  // Bebidas vs comida
-  const totalCatValor2 = Object.values(a.categorias).reduce((s, o) => s + (o.valor || o.recCatalogo || 0), 0)
-  const bebidas = num(a.categorias['BEBIDAS']?.valor) || num(a.categorias['BEBIDAS']?.recCatalogo)
-  if (totalCatValor2 > 0 && bebidas > 0) {
-    const pctBeb = parseFloat(pct1(bebidas, totalCatValor2))
-    ins.push({ nivel: pctBeb > 55 ? 'warn' : 'blue',
-      titulo: `Bebidas: ${pctBeb.toFixed(1)}% das vendas por categoria`,
-      texto: `${money(bebidas)} em bebidas de ${money(totalCatValor2)} total. ` +
-        (pctBeb > 55 ? 'Participação alta de bebidas — pode refletir eventos com show ou bar movimentado.' :
-          pctBeb < 20 ? 'Participação baixa de bebidas — refeição domina o mix.' : 'Mix equilibrado entre bebidas e alimentos.') })
-  }
-
-  // Cancelamentos
-  if (a.totalCancelQtd > 0) {
-    const pctC = parseFloat(pct1(a.totalCancelVal, a.totalFat))
-    const topCl = Object.entries(a.cancelPorClasse).sort((x, y) => y[1].valor - x[1].valor)[0]
-    ins.push({ nivel: pctC > 5 ? 'bad' : pctC > 2 ? 'warn' : 'ok',
-      titulo: `Cancelamentos: ${pctC.toFixed(1)}% do faturamento`,
-      texto: `${a.totalCancelQtd} item(ns) · ${money(a.totalCancelVal)}.` +
-        (topCl ? ` Principal motivo: ${CLASS_LABEL[topCl[0]] || topCl[0]} (${money(topCl[1].valor)}).` : '') })
-  }
-
-  // Sangrias — custos com pessoal x operacional
-  const custoPessoal = (a.sangPorTipo.musico || 0) + (a.sangPorTipo.extra || 0) + (a.sangPorTipo.vale || 0)
-  if (custoPessoal > 0 && a.totalFat > 0) {
-    const pctP = parseFloat(pct1(custoPessoal, a.totalFat))
-    ins.push({ nivel: pctP > 15 ? 'warn' : 'blue',
-      titulo: `Custo operacional (músicos + extras + vales): ${money(custoPessoal)} (${pctP.toFixed(1)}%)`,
-      texto: `Músico/banda: ${money(a.sangPorTipo.musico || 0)} · Extra/freelancer: ${money(a.sangPorTipo.extra || 0)} · Vale: ${money(a.sangPorTipo.vale || 0)}.` })
-  }
-
-  // Cortesias
-  if (a.totalCortesias > 0 && a.totalFat > 0) {
-    const pctCort = parseFloat(pct1(a.totalCortesias, a.totalFat))
-    ins.push({ nivel: pctCort > 3 ? 'warn' : 'blue',
-      titulo: `Cortesias: ${money(a.totalCortesias)} (${pctCort.toFixed(1)}% do faturamento)`,
-      texto: 'Contas ou itens liberados gratuitamente. Verifique se estão autorizados.' })
-  }
-
-  // Gorjeta
-  if (a.totalGorjeta > 0 && a.totalFat > 0) {
-    const pctG = parseFloat(pct1(a.totalGorjeta, a.totalFat))
-    ins.push({ nivel: 'ok',
-      titulo: `Taxa de serviço (gorjeta): ${money(a.totalGorjeta)} (${pctG.toFixed(1)}%)`,
-      texto: 'Cobrada nos cupons fiscais NFC-e. Incluída no faturamento total.' })
-  }
-
-  // Qualidade de conciliação
-  if (a.nFechamentos > 0) {
-    const nOk = (a.concilCount.sem_diferenca || 0) + (a.concilCount.tolerada || 0) + (a.concilCount.aprovada || 0)
-    const pctOk = parseFloat(pct1(nOk, a.nFechamentos))
-    ins.push({ nivel: pctOk >= 80 ? 'ok' : pctOk >= 60 ? 'warn' : 'bad',
-      titulo: `Fechamentos sem pendência: ${pctOk.toFixed(0)}% (${nOk} de ${a.nFechamentos})`,
-      texto: `${a.concilCount.pendente || 0} pendente(s) · ${a.concilCount.troca_modalidade || 0} troca de forma · ${a.concilCount.justificada || 0} justificada(s).` })
-  }
-
-  if (!ins.length)
-    return `<div class="alert blue">Sem dados suficientes para gerar insights neste período. Abra fechamentos para ver análises aqui.</div>`
-
-  const iconColor = { ok: '#16a34a', bad: '#dc2626', warn: '#d97706', blue: '#2563eb' }
-  return `<div style="display:grid;gap:10px">
-    ${ins.map(i => `<div class="alert ${i.nivel === 'ok' ? 'ok' : i.nivel === 'bad' ? 'bad' : i.nivel === 'blue' ? 'blue' : 'warn'}">
-      <b>${esc(i.titulo)}</b><br>
-      <span style="font-size:13px;line-height:1.6">${esc(i.texto)}</span>
-    </div>`).join('')}
-  </div>`
+function viewSangrias(a) {
+  const ativos = Object.keys(SANG).filter(k => a.st[k] > 0)
+  const kpis = `<div class="adash-kpis">` + (ativos.length
+    ? ativos.map(k => kpi(`${SANG[k].ico} ${SANG[k].lbl}`, money(a.st[k]), '', '', 'sang:' + k)).join('')
+    : kpi('Sangrias', money(0))) + `</div>`
+  const donut = barras(ativos.map(k => ({ nome: `${SANG[k].ico} ${SANG[k].lbl}`, valor: a.st[k], cor: SANG[k].cor })))
+  const comis = barras(a.dias.map(d => ({ nome: d.data_br, valor: d.com, cor: '#b8860b' })))
+  return kpis + drillPanel(a) + `<div class="adash-grid2">
+      ${section('Sangrias por categoria', donut)}
+      ${section('Comissão por dia', comis)}
+    </div>` + section('Sangrias detalhadas (por data)', listaSangrias(a.sangItens))
 }
 
-// ─── Controles + render ──────────────────────────────────────────────────────
-function buildControls() {
-  const tabs = VIEWS.map(([id, label]) =>
-    `<button class="dash-tab${dashView === id ? ' active' : ''}" onclick="window.__dashboard.setView('${id}')">${label}</button>`
-  ).join('')
-  return `<div class="dash-controls">
-      <div class="dash-dates">
-        <div class="field"><label>De</label><input type="date" id="dashIni" value="${dashIni}"></div>
-        <div class="field"><label>Até</label><input type="date" id="dashFim" value="${dashFim}"></div>
-        <button class="btn light" onclick="window.__dashboard.apply()"><i data-lucide="refresh-cw"></i> Aplicar</button>
-      </div>
-      <div class="dash-tabs">${tabs}</div>
-    </div>`
+function viewCancel(a) {
+  const tot = a.cancel.reduce((s, c) => s + num(c.valor), 0)
+  const kpis = `<div class="adash-kpis">` +
+    kpi('Total cancelado', money(tot), 'red') +
+    kpi('Qtde de cancelamentos', a.cancel.length) +
+    kpi('Cancelamento médio', money(a.cancel.length ? tot / a.cancel.length : 0)) + `</div>`
+  return kpis + section('Lançamentos de cancelamento (por data)', listaCancel(a.cancel))
+}
+
+function viewTurno(a) {
+  const rows = a.turnos.map(x => [
+    x.data_br, esc(x.operador), money(x.faturamento), money(x.comissoes), money(x.sangrias),
+    String(x.pessoas), money(x.ticket),
+    `<span style="color:${x.diferenca < 0 ? 'var(--bad)' : 'var(--ok)'}">${money(x.diferenca)}</span>`
+  ])
+  return section('Resumo por turno', tabela(
+    [{ t: 'Data' }, { t: 'Operador' }, { t: 'Faturamento', num: true }, { t: 'Comissão', num: true },
+      { t: 'Sangrias', num: true }, { t: 'Pessoas', num: true }, { t: 'Ticket', num: true }, { t: 'Diferença', num: true }],
+    rows, 'Sem turnos no período'))
+}
+
+// ─── Drill-down (lançamentos detalhados, bonitos e separados) ────────────────
+function drillPanel(a) {
+  if (!dashDrillKey) return ''
+  let titulo = '', conteudo = ''
+  if (dashDrillKey === 'cancel') { titulo = '❌ Cancelamentos'; conteudo = listaCancel(a.cancel) }
+  else if (dashDrillKey === 'sangrias') { titulo = '💸 Sangrias'; conteudo = listaSangrias(a.sangItens) }
+  else if (dashDrillKey === 'cortesias') { titulo = '🎁 Cortesias'; conteudo = listaCortesias(a.cortItens) }
+  else if (dashDrillKey === 'comissao') { titulo = '💰 Comissão por dia'; conteudo = listaComissao(a.dias) }
+  else if (dashDrillKey.startsWith('sang:')) {
+    const k = dashDrillKey.slice(5)
+    titulo = `${SANG[k].ico} ${SANG[k].lbl}`
+    conteudo = listaSangrias(a.sangItens.filter(s => s.tipo === k))
+  } else return ''
+  return `<div class="adash-drill">
+    <div class="drill-head"><span>${titulo}</span>
+      <button class="drill-x" onclick="window.__dashboard.drill('${dashDrillKey}')">✕ fechar</button></div>
+    ${conteudo}</div>`
+}
+
+function diaBadge(iso) { return `<span class="ld-date">${brDate(iso)}</span>` }
+
+function listaSangrias(itens) {
+  if (!itens.length) return `<div class="adash-vazio">Sem sangrias no período</div>`
+  const porTipo = {}
+  itens.forEach(s => (porTipo[s.tipo] = porTipo[s.tipo] || []).push(s))
+  return Object.keys(SANG).filter(k => porTipo[k]).map(k => {
+    const lista = porTipo[k].sort((a, b) => b.valor - a.valor)
+    const soma = lista.reduce((s, x) => s + x.valor, 0)
+    const rows = lista.map(s => `<div class="ld-row">
+      ${diaBadge(s.dia)}<span class="ld-name">${esc(s.desc || '—')}</span>
+      <span class="ld-val">${money(s.valor)}</span></div>`).join('')
+    return `<div class="ld-group" style="--gc:${SANG[k].cor}">
+      <div class="ld-gh"><span>${SANG[k].ico} ${SANG[k].lbl}</span><b>${money(soma)}</b></div>${rows}</div>`
+  }).join('')
+}
+
+function listaCancel(itens) {
+  if (!itens.length) return `<div class="adash-vazio">Sem cancelamentos no período</div>`
+  const rows = itens.map(c => `<div class="ld-row cancel">
+    <span class="ld-date">${esc((c.data_hora || '').replace('T', ' ').slice(0, 16) || brDate(c._dia))}</span>
+    <span class="ld-chip">mesa ${esc(c.mesa || '—')}</span>
+    <span class="ld-name"><b>${esc(c.produto || '—')}</b>
+      <small>${esc(c.operador || '')}${c.motivo ? ' · ' + esc(limpa(c.motivo)) : ''}</small></span>
+    <span class="ld-val red">${money(c.valor)}</span></div>`).join('')
+  return `<div class="ld-group" style="--gc:var(--bad)">${rows}</div>`
+}
+
+function listaCortesias(itens) {
+  if (!itens.length) return `<div class="adash-vazio">Sem cortesias no período</div>`
+  const rows = itens.sort((a, b) => b.valor - a.valor).map(c => `<div class="ld-row">
+    ${diaBadge(c.dia)}<span class="ld-name">${esc(c.desc || c.nome || 'Cortesia')}</span>
+    <span class="ld-val">${money(c.valor)}</span></div>`).join('')
+  return `<div class="ld-group" style="--gc:#7c3aed">${rows}</div>`
+}
+
+function listaComissao(dias) {
+  if (!dias.length) return `<div class="adash-vazio">Sem comissão no período</div>`
+  const rows = dias.map(d => `<div class="ld-row">
+    ${diaBadge(d.dia)}<span class="ld-name">Comissão dos garçons</span>
+    <span class="ld-val gold">${money(d.com)}</span></div>`).join('')
+  return `<div class="ld-group" style="--gc:#b8860b">${rows}</div>`
+}
+
+// ─── Shell, filtros e render ─────────────────────────────────────────────────
+function buildControls(data, filtro, view) {
+  const datas = [
+    ...fitasValidas(data).map(f => f._dia),
+    ...(data?.cancelamentos || []).map(cancelDia)
+  ]
+  const semanas = construirSemanas(datas)
+  const pill = (key, label, active) =>
+    `<button class="adash-pill${active ? ' active' : ''}" onclick="window.__dashboard.setWeek('${key}')">${label}</button>`
+  const pills = pill('todo', 'Todo o período', filtro.weekKey === 'todo') +
+    semanas.map(s => pill(s.key, 'Semana ' + s.label, filtro.weekKey === s.key)).join('')
+  const tabs = VIEWS.map(([id, lbl]) =>
+    `<button class="dash-tab${view === id ? ' active' : ''}" onclick="window.__dashboard.setView('${id}')">${lbl}</button>`).join('')
+  return `<div class="adash-filtros">
+      <span class="f-lbl">Período</span>
+      <div class="adash-pills">${pills}</div>
+      <span class="f-sep"></span>
+      <label class="f-date">De <input type="date" id="dashIni" value="${filtro.ini || ''}"></label>
+      <label class="f-date">Até <input type="date" id="dashFim" value="${filtro.fim || ''}"></label>
+      <button class="adash-pill" onclick="window.__dashboard.apply()">Aplicar</button>
+    </div>
+    <div class="dash-tabs adash-tabs">${tabs}</div>`
 }
 
 function renderBody() {
   const body = document.getElementById('dashBody')
   if (!body) return
-  if (dashLoading) { body.innerHTML = `<div class="alert blue"><b>Carregando dados do período…</b></div>`; return }
+  if (dashLoading) { body.innerHTML = `<div class="alert blue"><b>Carregando dados…</b></div>`; return }
   if (!dashData) { body.innerHTML = `<div class="alert warn"><b>Nuvem indisponível.</b> Não foi possível carregar os dados.</div>`; return }
-  const a = aggregate(dashData)
-  const views = { geral: viewGeral, formas: viewFormas, totvs: viewTotvs, produtos: viewProdutos, cancel: viewCancel, sangrias: viewSangrias, concil: viewConcil, insights: viewInsights }
-  body.innerHTML = (views[dashView] || viewGeral)(a)
-  if (dashView === 'geral') {
-    requestAnimationFrame(() =>
-      drawBars('dashCvFat', a.dias.map(d => fmtDia(d.dia)), a.dias.map(d => d.faturamento), '#2563eb'))
-  }
-  requestAnimationFrame(() => window.__refreshIcons?.())
+  body.innerHTML = renderViewHTML(dashData, dashFiltro, dashView)
 }
 
-export async function renderDashboard(force) {
+// Renderização pura (sem DOM) — usada pela tela e por testes/prévia
+function renderViewHTML(data, filtro, view) {
+  const a = agregar(data, filtro)
+  const views = { geral: viewGeral, produtos: viewProdutos, sangrias: viewSangrias, cancel: viewCancel, turno: viewTurno }
+  return (views[view] || viewGeral)(a)
+}
+
+export function renderToString(data, opts = {}) {
+  dashView = opts.view || 'geral'
+  dashFiltro = opts.filtro || { ini: null, fim: null, weekKey: 'todo' }
+  dashDrillKey = opts.drill || null
+  return buildControls(data, dashFiltro, dashView) + `<div id="dashBody">` + renderViewHTML(data, dashFiltro, dashView) + `</div>`
+}
+
+export async function renderDashboard(force = false) {
   const host = document.getElementById('dashHost')
   if (!host) return
-  if (!dashIni || !dashFim) { const [i, f] = defaultRange(); dashIni = i; dashFim = f }
-  host.innerHTML = buildControls() + `<div id="dashBody"></div>`
-  requestAnimationFrame(() => window.__refreshIcons?.())
-  if (!dashData || force) {
+  host.classList.add('araca-dash')
+  if (force || !dashData) {
     dashLoading = true
+    host.innerHTML = buildControls() + `<div id="dashBody"></div>`
     renderBody()
-    dashData = await loadDashboardData(dashIni, dashFim)
+    // janela ampla: traz tudo p/ montar as semanas; o filtro é aplicado no cliente
+    const hoje = new Date(); const ini = new Date(); ini.setDate(ini.getDate() - 400)
+    try { dashData = await loadDashboardData(isoOf(ini), isoOf(new Date(hoje.getTime() + 864e5))) } catch (e) { dashData = null }
     dashLoading = false
   }
+  host.innerHTML = buildControls() + `<div id="dashBody"></div>`
   renderBody()
 }
 
 export function setDashView(v) {
   dashView = v
-  document.querySelectorAll('.dash-tab').forEach(b => b.classList.remove('active'))
   renderBody()
-  document.querySelectorAll('.dash-tab').forEach(b => {
-    if (b.getAttribute('onclick')?.includes(`'${v}'`)) b.classList.add('active')
-  })
+  document.querySelectorAll('.adash-tabs .dash-tab').forEach(b =>
+    b.classList.toggle('active', b.textContent.includes((VIEWS.find(x => x[0] === v) || [])[1]?.slice(2) || '')))
 }
 
-export async function applyDashRange() {
-  const i = document.getElementById('dashIni')?.value
-  const f = document.getElementById('dashFim')?.value
-  if (i) dashIni = i
-  if (f) dashFim = f
-  await renderDashboard(true)
-}
-
-// Recalcula o gráfico quando a janela muda de tamanho.
-export function dashboardResize() {
-  if (document.getElementById('dashCvFat') && dashData && dashView === 'geral') {
-    const a = aggregate(dashData)
-    drawBars('dashCvFat', a.dias.map(d => fmtDia(d.dia)), a.dias.map(d => d.faturamento), '#2563eb')
+export function setDashWeek(key) {
+  if (key === 'todo') dashFiltro = { ini: null, fim: null, weekKey: 'todo' }
+  else {
+    const datas = [...fitasValidas(dashData).map(f => f._dia), ...(dashData?.cancelamentos || []).map(cancelDia)]
+    const s = construirSemanas(datas).find(x => x.key === key)
+    if (s) dashFiltro = { ini: s.ini, fim: s.fim, weekKey: key }
   }
+  renderDashboard(false)
 }
+
+export function applyDashRange() {
+  const i = document.getElementById('dashIni')?.value || null
+  const f = document.getElementById('dashFim')?.value || null
+  dashFiltro = { ini: i, fim: f, weekKey: 'custom' }
+  renderDashboard(false)
+}
+
+export function dashDrill(key) {
+  dashDrillKey = (dashDrillKey === key) ? null : key
+  renderBody()
+}
+
+export function filtraProd(q) {
+  const termo = String(q || '').toLowerCase()
+  const a = agregar(dashData, dashFiltro)
+  const prod = a.prod.slice().sort((x, y) => y.valor - x.valor).filter(p => p.nome.toLowerCase().includes(termo))
+  const wrap = document.querySelector('#dashBody .adash-sec:last-child .adash-tablewrap')
+  const novo = tabela([{ t: 'Produto' }, { t: 'Grupo' }, { t: 'Qtde', num: true }, { t: 'R$ total', num: true }],
+    prod.map(p => [esc(p.nome), esc(p.grupo), String(p.qtde), money(p.valor)]), 'Nenhum produto')
+  if (wrap) wrap.outerHTML = novo
+}
+
+export function dashboardResize() { /* sem canvas: layout é responsivo via CSS */ }

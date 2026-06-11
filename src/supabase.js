@@ -2,8 +2,8 @@ import { createClient } from '@supabase/supabase-js'
 import { state, activeForms } from './state.js'
 import { toast } from './ui.js'
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ''
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+const SUPABASE_URL = import.meta.env?.VITE_SUPABASE_URL || ''
+const SUPABASE_ANON_KEY = import.meta.env?.VITE_SUPABASE_ANON_KEY || ''
 
 export function initSupabase() {
   const connEl = document.getElementById('conn')
