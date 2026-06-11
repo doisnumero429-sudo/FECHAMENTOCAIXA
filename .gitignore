@@ -7,3 +7,7 @@ dist/
 __pycache__/
 *.pyc
 *.pyo
+
+# Dashboards gerados (saída do motor/gerar_dashboard.py)
+motor/Dashboard_*.html
+dashboard.html
