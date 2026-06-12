@@ -143,8 +143,10 @@ tr:hover td{background:#fafafa}
 .acht{flex:1;font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .achr{font-size:12px;font-weight:700;flex-shrink:0}
 .achc{font-size:11px;opacity:.7;flex-shrink:0;margin-right:4px}
-.accb{display:none;padding:4px 10px 8px}
+.accb{display:none;padding:6px 12px 10px;background:#fff}
 .accb.open{display:block}
+.accb .tbl th{position:static;background:#fbfbfc;font-size:11px}
+.accb .tbl td{font-size:12.5px}
 .foot{text-align:center;color:#aaa;font-size:11px;padding:18px}
 .vazio{color:#aaa;text-align:center;padding:24px;font-size:13px}
 canvas{max-height:240px}
@@ -246,14 +248,19 @@ function noRange(d){return (!filtro.ini||d>=filtro.ini)&&(!filtro.fim||d<=filtro
 function agregar(){
   const fs=RAW.fechamentos.filter(f=>noRange(f.data));
   const cs=RAW.cancelamentos.filter(c=>noRange(c.data));
-  const t={faturamento:0,credito:0,debito:0,pix:0,dinheiro:0,comissoes:0,cortesias:0,assinadas:0,
+  const t={faturamento:0,credito:0,debito:0,pix:0,dinheiro:0,dinheiro_liq:0,comissoes:0,cortesias:0,assinadas:0,
     descontos:0,sangrias:0,diferenca:0,pessoas:0,transacoes:0};
   const st={},prodMap={},grpMap={},sangItens=[],cortItens=[],turnos=[],dias={};
   Object.keys(SL).forEach(k=>st[k]=0);
-  fs.forEach(f=>{const fat=f.credito+f.debito+f.pix+f.dinheiro;
-    t.faturamento+=fat;t.credito+=f.credito;t.debito+=f.debito;t.pix+=f.pix;t.dinheiro+=f.dinheiro;
+  // Dinheiro REAL = o que o fechamento mostra (já líquido das sangrias) + as sangrias pagas em dinheiro.
+  // Usa a SOMA ITEMIZADA das sangrias (o registro real de quem recebeu), garantindo que o
+  // total bata com a soma das categorias.
+  fs.forEach(f=>{const sIt=f.sangrias.reduce((s,x)=>s+x.valor,0);
+    const dinBruto=f.dinheiro+sIt;const fat=f.credito+f.debito+f.pix+dinBruto;
+    t.faturamento+=fat;t.credito+=f.credito;t.debito+=f.debito;t.pix+=f.pix;
+    t.dinheiro+=dinBruto;t.dinheiro_liq+=f.dinheiro;
     t.comissoes+=f.comissoes;t.cortesias+=f.cortesias_total;t.assinadas+=f.assinadas_total;
-    t.descontos+=f.descontos_total;t.sangrias+=f.sangrias_total;t.diferenca+=f.diferenca_total;
+    t.descontos+=f.descontos_total;t.sangrias+=sIt;t.diferenca+=f.diferenca_total;
     t.pessoas+=f.pessoas;t.transacoes+=f.transacoes;
     dias[f.data_br]=dias[f.data_br]||{fat:0,com:0};dias[f.data_br].fat+=fat;dias[f.data_br].com+=f.comissoes;
     f.sangrias.forEach(s=>{st[s.tipo]+=s.valor;sangItens.push({...s,data:f.data_br});});
@@ -262,7 +269,7 @@ function agregar(){
       prodMap[k].qtde+=p.qtde;prodMap[k].valor+=p.valor;
       (grpMap[p.grupo]=grpMap[p.grupo]||{nome:p.grupo,qtde:0,valor:0});grpMap[p.grupo].qtde+=p.qtde;grpMap[p.grupo].valor+=p.valor;});
     turnos.push({data:f.data_br,operador:f.operador,faturamento:fat,comissoes:f.comissoes,
-      sangrias:f.sangrias_total,pessoas:f.pessoas,ticket:f.pessoas?fat/f.pessoas:0,diferenca:f.diferenca_total});
+      sangrias:sIt,pessoas:f.pessoas,ticket:f.pessoas?fat/f.pessoas:0,diferenca:f.diferenca_total});
   });
   return {t,st,prod:Object.values(prodMap),grp:Object.values(grpMap),sangItens,cortItens,
     turnos,dias,cancel:cs.slice().sort((a,b)=>a.data_hora<b.data_hora?-1:1)};
@@ -279,6 +286,7 @@ function render(){
   // KPIs (cards clicáveis abrem drill-down)
   document.getElementById('kpis').innerHTML =
     card('Faturamento',money(t.faturamento),'green') +
+    card('Dinheiro recebido',money(t.dinheiro),'gold','R$ '+t.sangrias.toLocaleString('pt-BR',{minimumFractionDigits:2})+' em sangrias','dinheiro') +
     card('Comissão (garçons)',money(t.comissoes),'gold','','comissao') +
     card('Sangrias',money(t.sangrias),'red',Object.keys(SL).filter(k=>A.st[k]>0).length+' categorias','sangrias') +
     card('Cancelamentos',money(A.cancel.reduce((s,c)=>s+c.valor,0)),'red',A.cancel.length+' lançamentos','cancel') +
@@ -300,7 +308,9 @@ function render(){
     <tr><td>Cartão de Crédito</td><td class="num">${money(t.credito)}</td></tr>
     <tr><td>Cartão de Débito</td><td class="num">${money(t.debito)}</td></tr>
     <tr><td>PIX</td><td class="num">${money(t.pix)}</td></tr>
-    <tr><td>Dinheiro</td><td class="num">${money(t.dinheiro)}</td></tr>
+    <tr><td><b>Dinheiro recebido (total)</b></td><td class="num"><b>${money(t.dinheiro)}</b></td></tr>
+    <tr><td style="padding-left:24px;color:#888">↳ pago em sangrias</td><td class="num" style="color:#e63946">− ${money(t.sangrias)}</td></tr>
+    <tr><td style="padding-left:24px;color:#888">↳ líquido que sobrou no caixa</td><td class="num">${money(t.dinheiro_liq)}</td></tr>
     <tr><td><b>Faturamento total</b></td><td class="num"><b>${money(t.faturamento)}</b></td></tr>
     <tr><td>Comissão (gorjeta)</td><td class="num">${money(t.comissoes)}</td></tr>
     <tr><td>Descontos concedidos</td><td class="num">${money(t.descontos)}</td></tr>
@@ -383,9 +393,9 @@ function cv(id){return document.getElementById(id);}
 function mkChart(id,cfg){try{if(typeof Chart==='undefined')return null;const el=cv(id);if(!el)return null;
   return new Chart(el,cfg);}catch(e){console.warn('grafico',id,e);return null;}}
 function tabela(cols,rows,vazio){
-  if(!rows.length) return `<tbody><tr><td colspan="${cols.length}" class="vazio">${vazio}</td></tr></tbody>`;
-  return `<thead><tr>`+cols.map((c,i)=>`<th class="${i>=cols.length-1?'num':''}">${c}</th>`).join('')+`</tr></thead><tbody>`+
-    rows.map(r=>`<tr>`+r.map(c=>typeof c==='object'?`<td class="num">${c.n}</td>`:`<td>${c}</td>`).join('')+`</tr>`).join('')+`</tbody>`;
+  if(!rows.length) return `<div class="vazio">${vazio}</div>`;
+  return `<table class="tbl"><thead><tr>`+cols.map((c,i)=>`<th class="${i>=cols.length-1?'num':''}">${c}</th>`).join('')+`</tr></thead><tbody>`+
+    rows.map(r=>`<tr>`+r.map(c=>typeof c==='object'?`<td class="num">${c.n}</td>`:`<td>${c}</td>`).join('')+`</tr>`).join('')+`</tbody></table>`;
 }
 // Acordeão genérico: cada grupo expande/recolhe ao clicar (abre = aberto).
 function acordeao(grupos,vazio,abertos){
@@ -437,6 +447,14 @@ function drill(key,el){
     A.cortItens.map(c=>[c.data,c.desc||c.nome||'—',{n:money(c.valor)}]),'Sem cortesias');
   else if(key==='comissao') html=`<h3>💰 Comissão por dia</h3>`+tabela(['Data','Comissão'],
     Object.keys(A.dias).map(d=>[d,{n:money(A.dias[d].com)}]),'Sem comissão');
+  else if(key==='dinheiro'){const t=A.t;
+    const linhas=[['💵 Dinheiro recebido (total)',{n:money(t.dinheiro)}]]
+      .concat(Object.keys(SL).filter(k=>A.st[k]>0)
+        .map(k=>['↳ pago em '+SL[k],{n:'− '+money(A.st[k])}]))
+      .concat([['= Líquido que sobrou no caixa',{n:money(t.dinheiro_liq)}]]);
+    html=`<h3>💵 Dinheiro — de onde veio e para onde foi</h3>`+
+      `<p style="color:#777;font-size:12px;margin-bottom:10px">O fechamento mostra o dinheiro <b>já com as sangrias descontadas</b>. O valor real recebido em dinheiro é o do fechamento <b>+</b> as sangrias pagas pela gaveta (abaixo, por categoria).</p>`+
+      tabela(['Composição','Valor'],linhas,'Sem dinheiro no período');}
   box.innerHTML=html;box.classList.add('open');
 }
 
@@ -450,7 +468,8 @@ def main():
     payload = montar_payload(src)
     html = HTML.replace("__DADOS__", json.dumps(payload, ensure_ascii=False))
     Path(out).write_text(html, encoding="utf-8")
-    fat = sum(f["credito"] + f["debito"] + f["pix"] + f["dinheiro"] for f in payload["fechamentos"])
+    fat = sum(f["credito"] + f["debito"] + f["pix"] + f["dinheiro"]
+              + sum(s["valor"] for s in f["sangrias"]) for f in payload["fechamentos"])
     print(f"OK: {out} | {len(payload['fechamentos'])} fechamentos | "
           f"{len(payload['cancelamentos'])} cancelamentos | faturamento {fat:.2f}")
 
