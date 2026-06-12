@@ -27,6 +27,36 @@ def limpar(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+# Vocabulário de "papel/função" que costuma vir no FINAL da descrição da sangria,
+# depois do nome de quem recebeu. Ex.: "JOSE MORAES AUX COZ TN" → nome + papel + turno.
+_ROLE_VOCAB = {
+    "GARCOM", "GARCON", "GARCONS", "COZINHEIRA", "COZINHEIRO", "COZINHA", "COZ",
+    "AUX", "AUXILIAR", "CHURRASQUEIRO", "CHURRASQUEIR", "CHURRAS", "SEGURANCA",
+    "SEGURANC", "BARMAN", "BARTENDER", "BAR", "CAIXA", "MUSICA", "MUSICO",
+    "MSICA", "MSICO", "CZNH", "FOLGA", "TN", "TD", "DE", "DA", "DO",
+}
+_TIPO_PREFIX = re.compile(r"^(VALES?|EXTRAS?|MUSICOS?|DESPESAS?|COFRE)\b[\s:.\-]*", re.I)
+
+
+def pessoa_papel(desc: str, tipo: str):
+    """Separa 'quem recebeu' (pessoa) do 'papel/função' (usado p/ inferir o setor).
+    Para despesas, a 'pessoa' é, na prática, o item comprado."""
+    d = re.sub(r"\(.*", "", desc or "").strip()         # remove nota entre parênteses (mesmo sem fechar)
+    m = _TIPO_PREFIX.match(d)
+    if m:
+        d = d[m.end():].strip()
+    if tipo == "despesa":
+        return d or "Despesa", ""                       # despesa: descrição é o próprio gasto
+    tokens = d.split()
+    papel_tokens = []
+    while tokens and ascii_fold(tokens[-1]) in _ROLE_VOCAB:
+        papel_tokens.insert(0, tokens.pop())
+    pessoa = " ".join(tokens).strip()
+    papel = " ".join(papel_tokens).strip()
+    return (pessoa or papel or "—"), papel
+
+
+
 def resolver_nome(trunc: str, unit: float, fold2orig: dict, cat_norm: dict) -> str:
     """A TOTVS trunca o nome no comprovante de cancelamento (~12 chars).
     Liga ao nome completo do catálogo; se o prefixo casar com vários,
@@ -66,8 +96,12 @@ def montar_payload(src: str) -> dict:
                 grupo = grp["grupo"] or cat_norm.get(fold, {}).get("g", "") or "OUTROS"
                 produtos.append({"nome": it["produto"], "grupo": grupo,
                                  "qtde": it["qtde"], "valor": round(it["qtde"] * preco, 2)})
-        sangrias = [{"tipo": s["tipo"], "valor": s["valor"],
-                     "desc": limpar(s["descricao"] or s["nome"])} for s in f["sangrias"]]
+        sangrias = []
+        for s in f["sangrias"]:
+            desc = limpar(s["descricao"] or s["nome"])
+            pessoa, papel = pessoa_papel(desc, s["tipo"])
+            sangrias.append({"tipo": s["tipo"], "valor": s["valor"], "desc": desc,
+                             "pessoa": pessoa, "papel": papel})
         assinadas = [{"nome": limpar(a["nome"]), "valor": a["valor"]} for a in f["assinadas"]]
         cortesias = [{"nome": limpar(c["nome"]), "desc": limpar(c["descricao"]), "valor": c["valor"]}
                      for c in f["cortesias"]]
@@ -351,8 +385,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
         <div class="ph"><div><h2>Sangrias</h2><p id="sub-sang"></p></div></div>
         <div class="grid k4" id="sg-kpis" style="margin-bottom:16px"></div>
         <div class="grid k2" style="margin-bottom:16px">
-          <div class="panel"><div class="panel-h"><h3>Por categoria</h3></div><canvas id="cv-sang" height="220"></canvas></div>
-          <div class="panel"><div class="panel-h"><h3>Comissão por dia</h3></div><canvas id="cv-comis" height="220"></canvas></div>
+          <div class="panel"><div class="panel-h"><h3>Por categoria</h3><span class="sub">clique p/ ver pessoas</span></div><div id="sg-cat"></div></div>
+          <div class="panel"><div class="panel-h"><h3>Por setor</h3><span class="sub">qual setor mais gasta</span></div><div id="sg-setor"></div></div>
         </div>
         <div class="panel pad0 tbox"><div id="sg-table"></div></div>
       </section>
@@ -368,6 +402,36 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
         <div class="ph"><div><h2>Por Turno</h2><p id="sub-turno"></p></div></div>
         <div class="grid k2" id="tn-cards"></div>
       </section>
+
+      <section class="page" data-page="config">
+        <div class="ph"><div><h2>Configurações</h2><p>Ajustes salvos neste aparelho. Afetam só a visualização — nunca os dados originais.</p></div></div>
+        <div class="grid k2">
+          <div class="panel">
+            <div class="panel-h"><h3>Tolerância de caixa</h3></div>
+            <p style="font-size:12.5px;color:var(--muted);margin-bottom:10px">Diferença de caixa (para mais ou para menos) considerada "dentro do esperado". Acima disso o turno aparece como "conferir".</p>
+            <label style="font-size:12px;color:var(--muted);font-weight:600">Valor em R$<br>
+              <input type="number" step="0.01" id="cfg-tol" style="margin-top:6px;height:38px;width:160px;border:1px solid var(--line2);border-radius:9px;padding:0 12px;font-size:14px"></label>
+          </div>
+          <div class="panel">
+            <div class="panel-h"><h3>O que isso muda?</h3></div>
+            <p style="font-size:12.5px;color:var(--ink2);line-height:1.6">As <b>regras de setor</b> ligam a função escrita na sangria (ex.: <i>garçom</i>, <i>aux coz</i>) ao setor (ex.: <i>Atendimento</i>, <i>Cozinha</i>). Assim os donos veem <b>qual setor mais gasta</b> e quem recebeu. Se aparecer alguém em "Não informado", crie uma regra nova com a palavra que aparece na sangria.</p>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:14px">
+          <div class="panel-h"><h3>Regras de setor</h3><span class="sub">palavra na sangria → setor</span></div>
+          <div id="cfg-rules"></div>
+          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+            <input id="cfg-kw" placeholder="palavra (ex.: GARCOM)" style="height:36px;border:1px solid var(--line2);border-radius:9px;padding:0 12px;font-size:13px">
+            <input id="cfg-setor" placeholder="setor (ex.: Atendimento)" style="height:36px;border:1px solid var(--line2);border-radius:9px;padding:0 12px;font-size:13px">
+            <button class="ibtn" id="cfg-add">Adicionar regra</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:16px">
+          <button class="ibtn" id="cfg-save" style="background:var(--ink);color:#fff;border-color:var(--ink)">Salvar configurações</button>
+          <button class="ibtn" id="cfg-reset">Restaurar padrão</button>
+          <span id="cfg-msg" style="font-size:12.5px;color:var(--green);align-self:center;font-weight:600"></span>
+        </div>
+      </section>
     </div>
   </div>
 </div>
@@ -379,8 +443,34 @@ const RAW = __DADOS__;
 const SL = RAW.sangria_labels;
 const money = v => 'R$ ' + (Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const money0 = v => 'R$ ' + (Number(v)||0).toLocaleString('pt-BR',{maximumFractionDigits:0});
-const TOL = 5; // tolerância (R$) para diferença de caixa "dentro do esperado"
+let TOL = 5; // tolerância (R$); sincronizada com as Configurações a cada render()
 let charts = {}, filtro = {ini:null, fim:null};
+
+/* ── Configurações (salvas no aparelho via localStorage) ── */
+const SETOR_RULES_PADRAO = [
+  {kw:'GARCOM', setor:'Atendimento'},{kw:'GARCON', setor:'Atendimento'},
+  {kw:'CHURRAS', setor:'Churrasqueira'},
+  {kw:'AUX', setor:'Cozinha'},{kw:'COZ', setor:'Cozinha'},{kw:'CZNH', setor:'Cozinha'},
+  {kw:'SEGURANC', setor:'Segurança'},
+  {kw:'BAR', setor:'Bar'},
+  {kw:'CAIXA', setor:'Caixa'},
+  {kw:'MUSIC', setor:'Música'},{kw:'MSIC', setor:'Música'},
+];
+const CFG_PADRAO = {tolerancia:5, setorRules:SETOR_RULES_PADRAO, freelanceLabel:'Extra (freelancer)'};
+function carregarCfg(){try{const s=JSON.parse(localStorage.getItem('araca_cfg')||'{}');
+  return {...CFG_PADRAO, ...s, setorRules:(s.setorRules&&s.setorRules.length)?s.setorRules:SETOR_RULES_PADRAO};}
+  catch(e){return {...CFG_PADRAO};}}
+function salvarCfg(){localStorage.setItem('araca_cfg', JSON.stringify(CFG));}
+let CFG = carregarCfg();
+const fold = s => (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+function setorOf(s){
+  if(s.tipo==='musico')return 'Música';
+  if(s.tipo==='despesa')return 'Despesas';
+  if(s.tipo==='cofre')return 'Cofre';
+  const p=fold(s.papel||'');
+  for(const r of CFG.setorRules){if(p.includes(r.kw))return r.setor;}
+  return 'Não informado';
+}
 
 /* ── Ícones (Lucide, inline) ── */
 const P = {
@@ -416,8 +506,9 @@ function ic(n,cls){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentC
 
 /* ── Navegação ── */
 const NAV=[['geral','Visão Geral','dash'],['prod','Produtos','utensils'],['equipe','Equipe','users'],
-  ['hora','Horários','clock'],['sang','Sangrias','coins'],['cancel','Cancelamentos','xc'],['turno','Por Turno','cal']];
-const SUBT={geral:'Visão geral',prod:'Produtos vendidos',equipe:'Comissões e assinadas',hora:'Movimento por hora',sang:'Saídas de caixa',cancel:'Auditoria',turno:'Fechamentos'};
+  ['hora','Horários','clock'],['sang','Sangrias','coins'],['cancel','Cancelamentos','xc'],
+  ['turno','Por Turno','cal'],['config','Configurações','sliders']];
+const SUBT={geral:'Visão geral',prod:'Produtos vendidos',equipe:'Comissões e assinadas',hora:'Movimento por hora',sang:'Saídas de caixa',cancel:'Auditoria',turno:'Fechamentos',config:'Ajustes'};
 function montarNav(){
   document.getElementById('brandIcon').innerHTML=ic('utensils');
   document.getElementById('menuBtn').innerHTML=ic('menu');
@@ -433,6 +524,7 @@ function goPage(id){
   document.querySelectorAll('.nav-i').forEach(b=>b.classList.toggle('active',b.dataset.go===id));
   document.getElementById('tb-sub').textContent=SUBT[id]||'';
   document.getElementById('sidebar').classList.remove('open');
+  if(id==='config')renderConfig();
   document.querySelector('.content').scrollIntoView({block:'start'});
 }
 
@@ -596,9 +688,24 @@ function mkDough(id,labels,data,cols){
 function emptyChart(id,txt){const el=document.getElementById(id);if(el&&el.parentNode)el.parentNode.innerHTML=`<div class="empty">${ic('box')}${txt}</div>`;}
 
 /* ── Drawer ── */
+function buildSangDrawer(key){
+  const [,kind,...rest]=key.split(':');const val=decodeURIComponent(rest.join(':'));
+  const sang=(window.__sang||[]);
+  const itens=kind==='tipo'?sang.filter(s=>s.tipo===val):sang.filter(s=>s.setor===val);
+  const byP={};itens.forEach(s=>{const p=s.pessoa||s.desc||'—';byP[p]=(byP[p]||0)+s.valor;});
+  const total=itens.reduce((a,s)=>a+s.valor,0);
+  const lista=Object.keys(byP).map(p=>({nome:p,val:money(byP[p]),_v:byP[p]})).sort((a,b)=>b._v-a._v);
+  const tone=kind==='setor'?'blue':(tbadge(val)==='neutral'?'ink':tbadge(val));
+  const icon=kind==='setor'?'users':(val==='musico'?'award':val==='despesa'?'receipt':'coins');
+  const title=kind==='setor'?val:catLabel(val);
+  return {icon,tone,title,sub:kind==='setor'?'setor · quem recebeu e quanto':'categoria · quem recebeu e quanto',
+    body:`<div class="dr-big money">${money(total)}</div><div class="dr-note">Soma do que cada pessoa recebeu ${kind==='setor'?'neste setor':'nesta categoria'}, no período filtrado.</div>`+
+      (lista.length?liList(lista):`<div class="empty">${ic('coins')}Sem lançamentos</div>`)};
+}
 function openDrawer(key){
-  const A=agregar(),t=A.t;const meta=DR[key];if(!meta)return;
-  const d=meta(A,t);
+  const A=agregar(),t=A.t;
+  const d = key.indexOf('sang:')===0 ? buildSangDrawer(key) : (DR[key]?DR[key](A,t):null);
+  if(!d)return;
   document.getElementById('dr-head').innerHTML=`<span class="kic tone-${d.tone}">${ic(d.icon)}</span>
     <div class="tt"><b>${d.title}</b><span>${d.sub||''}</span></div>
     <button class="ibtn sq" id="drClose">${ic('x')}</button>`;
@@ -654,6 +761,7 @@ function risco(v){return v>=80?{x:'Alto',t:'red'}:v>=30?{x:'Médio',t:'gold'}:{x
 /* ── Render ── */
 function render(){
   destroy();
+  TOL = CFG.tolerancia;
   const A=agregar(),t=A.t;const prev=periodoAnterior();const P0=prev?aggOf(prev.ini,prev.fim).t:null;
   const rotulo=filtro.ini||filtro.fim?`${(filtro.ini||'início')} a ${(filtro.fim||'fim')}`:'Todo o período';
   document.getElementById('foot-periodo').textContent=rotulo;
@@ -737,15 +845,37 @@ function render(){
      kpi({icon:'coins',tone:'blue',title:'Balcão',value:money(se.balcao_valor),badge:{t:'neutral',x:se.balcao_pessoas+' pessoas'}})].join(''):
     `<div class="panel"><div class="empty">${ic('scale')}Setor disponível a partir do fechamento de 11/06</div></div>`;
 
-  /* Sangrias */
-  mountKpis('sg-kpis',Object.keys(SL).filter(k=>A.st[k]>0).map(k=>
-    kpi({icon:k==='despesa'?'receipt':k==='musico'?'award':'coins',tone:tbadge(k)==='neutral'?'ink':tbadge(k),title:catLabel(k),value:money(A.st[k]),drawer:'sangrias'}))
-    .concat(Object.values(A.st).every(v=>!v)?[kpi({icon:'coins',tone:'ink',title:'Sangrias',value:'R$ 0,00'})]:[]));
-  const sk=Object.keys(SL).filter(k=>A.st[k]>0);
-  if(sk.length)charts.sang=mkDough('cv-sang',sk.map(k=>catLabel(k)),sk.map(k=>A.st[k]),[COR.blue,COR.green,COR.purple,COR.gold,COR.red,COR.slate]);else emptyChart('cv-sang','Sem sangrias');
-  const dd2=Object.keys(A.dias);if(dd2.length)charts.comis=mkBar('cv-comis',dd2,dd2.map(d=>A.dias[d].com),COR.gold,true);else emptyChart('cv-comis','Sem comissão');
-  dataTable('sg-table',[{t:'Categoria'},{t:'Descrição'},{t:'Data'},{t:'Valor',num:true}],
-    A.sangItens.map(s=>[{v:badge(catLabel(s.tipo),tbadge(s.tipo)),s:s.tipo},txt(s.desc||'—'),txt(s.data),num(s.valor)]),{sortIdx:3});
+  /* Sangrias — por tipo, por setor, com pessoas (quem recebeu e quanto) */
+  const sang=A.sangItens.map(s=>({...s,setor:setorOf(s)}));
+  const porTipo={};sang.forEach(s=>{(porTipo[s.tipo]=porTipo[s.tipo]||0);porTipo[s.tipo]+=s.valor;});
+  const totSang=sang.reduce((a,s)=>a+s.valor,0);
+  const ext=porTipo.extra||0;
+  mountKpis('sg-kpis',[
+    kpi({icon:'coins',tone:'red',title:'Total de sangrias',value:money(totSang)}),
+    kpi({icon:'wallet',tone:'green',title:CFG.freelanceLabel,value:money(ext),drawer:'sang:tipo:extra'}),
+    kpi({icon:'award',tone:'purple',title:'Músico',value:money(porTipo.musico||0),drawer:'sang:tipo:musico'}),
+    kpi({icon:'receipt',tone:'gold',title:'Despesas',value:money(porTipo.despesa||0),drawer:'sang:tipo:despesa'}),
+  ]);
+  // por categoria (barras clicáveis → pessoas)
+  const cats=Object.keys(porTipo).sort((a,b)=>porTipo[b]-porTipo[a]);
+  const mcat=Math.max(1,...cats.map(k=>porTipo[k]));
+  document.getElementById('sg-cat').innerHTML=cats.length?cats.map(k=>
+    `<button class="brow" style="width:100%;border:none;background:none;cursor:pointer;text-align:left;padding:0" onclick="openDrawer('sang:tipo:${k}')">
+      <div class="bname">${badge(catLabel(k),tbadge(k))}</div>
+      <div class="btrack"><div class="bfill" style="width:${100*porTipo[k]/mcat}%;background:${({vale:COR.blue,extra:COR.green,musico:COR.purple,despesa:COR.gold,cofre:COR.red})[k]||COR.slate}"></div></div>
+      <div class="bval money">${money(porTipo[k])}</div></button>`).join(''):`<div class="empty">${ic('coins')}Sem sangrias no período</div>`;
+  // por setor (barras clicáveis → pessoas)
+  const porSetor={};sang.forEach(s=>{(porSetor[s.setor]=porSetor[s.setor]||0);porSetor[s.setor]+=s.valor;});
+  const setores=Object.keys(porSetor).sort((a,b)=>porSetor[b]-porSetor[a]);
+  const msec=Math.max(1,...setores.map(k=>porSetor[k]));
+  document.getElementById('sg-setor').innerHTML=setores.length?setores.map(k=>
+    `<button class="brow" style="width:100%;border:none;background:none;cursor:pointer;text-align:left;padding:0" onclick="openDrawer('sang:setor:${encodeURIComponent(k)}')">
+      <div class="bname">${k}</div>
+      <div class="btrack"><div class="bfill" style="width:${100*porSetor[k]/msec}%"></div></div>
+      <div class="bval money">${money(porSetor[k])}</div></button>`).join(''):`<div class="empty">${ic('users')}Sem setores no período</div>`;
+  window.__sang=sang;
+  dataTable('sg-table',[{t:'Categoria'},{t:'Setor'},{t:'Pessoa / descrição'},{t:'Data'},{t:'Valor',num:true}],
+    sang.map(s=>[{v:badge(catLabel(s.tipo),tbadge(s.tipo)),s:s.tipo},txt(s.setor),txt(s.pessoa||s.desc||'—'),txt(s.data),num(s.valor)]),{sortIdx:4});
 
   /* Cancelamentos */
   const cancArr=A.cancel;const cancV=cancArr.reduce((s,c)=>s+c.valor,0);const alto=cancArr.filter(c=>c.valor>=80);
@@ -810,8 +940,30 @@ function exportar(){
   const a=document.createElement('a');a.href=url;a.download='araca_painel_'+(filtro.ini||'tudo')+'.csv';a.click();URL.revokeObjectURL(url);
 }
 
+/* Configurações */
+function renderConfig(){
+  document.getElementById('cfg-tol').value=CFG.tolerancia;
+  const box=document.getElementById('cfg-rules');
+  box.innerHTML=CFG.setorRules.length?CFG.setorRules.map((r,i)=>
+    `<div class="brow" style="margin-bottom:8px"><span class="badge b-neutral" style="min-width:130px;text-align:center">${r.kw}</span>
+     <span style="flex:1;color:var(--ink2)">→ <b>${r.setor}</b></span>
+     <button class="rowbtn" data-del="${i}">${ic('x')} remover</button></div>`).join(''):`<div class="empty">Sem regras</div>`;
+  box.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{CFG.setorRules.splice(+b.dataset.del,1);renderConfig();});
+}
+function msgCfg(txt){const m=document.getElementById('cfg-msg');m.textContent=txt;setTimeout(()=>m.textContent='',2500);}
+function wireConfig(){
+  document.getElementById('cfg-add').onclick=()=>{
+    const kw=fold(document.getElementById('cfg-kw').value.trim());const st=document.getElementById('cfg-setor').value.trim();
+    if(!kw||!st){msgCfg('Preencha palavra e setor.');return;}
+    CFG.setorRules.unshift({kw,setor:st});document.getElementById('cfg-kw').value='';document.getElementById('cfg-setor').value='';renderConfig();};
+  document.getElementById('cfg-save').onclick=()=>{CFG.tolerancia=Number(document.getElementById('cfg-tol').value)||0;
+    salvarCfg();render();msgCfg('Configurações salvas ✓');};
+  document.getElementById('cfg-reset').onclick=()=>{CFG={...CFG_PADRAO,setorRules:SETOR_RULES_PADRAO.map(r=>({...r}))};
+    salvarCfg();renderConfig();render();msgCfg('Restaurado para o padrão ✓');};
+}
+
 /* init */
-montarNav();montarChips();render();
+montarNav();montarChips();render();wireConfig();renderConfig();
 document.getElementById('menuBtn').onclick=()=>document.getElementById('sidebar').classList.toggle('open');
 document.getElementById('scrim').onclick=()=>{closeDrawer();document.getElementById('sidebar').classList.remove('open');};
 document.getElementById('refreshBtn').onclick=()=>{const b=document.getElementById('refreshBtn');b.style.transform='rotate(360deg)';b.style.transition='transform .5s';render();setTimeout(()=>{b.style.transform='';b.style.transition='';},520);};
