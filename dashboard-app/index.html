@@ -210,7 +210,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
         <button class="ibtn sq" id="customBtn" title="Período personalizado"></button>
         <button class="ibtn sq" id="refreshBtn" title="Atualizar"></button>
         <button class="ibtn" id="exportBtn"><span id="expIco"></span><span>Exportar</span></button>
-        <span class="upd"><span class="led"></span><span class="txt">Atualizado 12/06/2026 06:16</span></span>
+        <span class="upd"><span class="led"></span><span class="txt">Atualizado 12/06/2026 06:21</span></span>
       </div>
     </header>
     <div class="content">
@@ -261,7 +261,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
         <div class="grid k4" id="sg-kpis" style="margin-bottom:16px"></div>
         <div class="grid k2" style="margin-bottom:16px">
           <div class="panel"><div class="panel-h"><h3>Por categoria</h3><span class="sub">clique p/ ver pessoas</span></div><div id="sg-cat"></div></div>
-          <div class="panel"><div class="panel-h"><h3>Por setor</h3><span class="sub">qual setor mais gasta</span></div><div id="sg-setor"></div></div>
+          <div class="panel"><div class="panel-h"><h3>Freelancers por setor</h3><span class="sub">só extras · clique p/ ver pessoas</span></div><div id="sg-setor"></div></div>
         </div>
         <div class="panel pad0 tbox"><div id="sg-table"></div></div>
       </section>
@@ -566,15 +566,17 @@ function emptyChart(id,txt){const el=document.getElementById(id);if(el&&el.paren
 function buildSangDrawer(key){
   const [,kind,...rest]=key.split(':');const val=decodeURIComponent(rest.join(':'));
   const sang=(window.__sang||[]);
-  const itens=kind==='tipo'?sang.filter(s=>s.tipo===val):sang.filter(s=>s.setor===val);
-  const byP={};itens.forEach(s=>{const p=s.pessoa||s.desc||'—';byP[p]=(byP[p]||0)+s.valor;});
+  // setor = SOMENTE extras (freelancers); tipo = a categoria escolhida
+  const itens=kind==='tipo'?sang.filter(s=>s.tipo===val)
+                           :sang.filter(s=>s.tipo==='extra'&&s.setor===val);
   const total=itens.reduce((a,s)=>a+s.valor,0);
-  const lista=Object.keys(byP).map(p=>({nome:p,val:money(byP[p]),_v:byP[p]})).sort((a,b)=>b._v-a._v);
-  const tone=kind==='setor'?'blue':(tbadge(val)==='neutral'?'ink':tbadge(val));
+  // lista por lançamento: data + nome da pessoa + valor (não somado)
+  const lista=itens.map(s=>({nome:s.pessoa||s.desc||'—',sub:s.data,val:money(s.valor)}));
+  const tone=kind==='setor'?'green':(tbadge(val)==='neutral'?'ink':tbadge(val));
   const icon=kind==='setor'?'users':(val==='musico'?'award':val==='despesa'?'receipt':'coins');
   const title=kind==='setor'?val:catLabel(val);
-  return {icon,tone,title,sub:kind==='setor'?'setor · quem recebeu e quanto':'categoria · quem recebeu e quanto',
-    body:`<div class="dr-big money">${money(total)}</div><div class="dr-note">Soma do que cada pessoa recebeu ${kind==='setor'?'neste setor':'nesta categoria'}, no período filtrado.</div>`+
+  return {icon,tone,title,sub:kind==='setor'?'freelancers do setor · data e pessoa':'categoria · data e pessoa',
+    body:`<div class="dr-big money">${money(total)}</div>`+
       (lista.length?liList(lista):`<div class="empty">${ic('coins')}Sem lançamentos</div>`)};
 }
 function openDrawer(key){
@@ -739,18 +741,20 @@ function render(){
       <div class="bname">${badge(catLabel(k),tbadge(k))}</div>
       <div class="btrack"><div class="bfill" style="width:${100*porTipo[k]/mcat}%;background:${({vale:COR.blue,extra:COR.green,musico:COR.purple,despesa:COR.gold,cofre:COR.red})[k]||COR.slate}"></div></div>
       <div class="bval money">${money(porTipo[k])}</div></button>`).join(''):`<div class="empty">${ic('coins')}Sem sangrias no período</div>`;
-  // por setor (barras clicáveis → pessoas)
-  const porSetor={};sang.forEach(s=>{(porSetor[s.setor]=porSetor[s.setor]||0);porSetor[s.setor]+=s.valor;});
+  // por setor — SOMENTE extras (freelancers): qual setor mais gasta com freelancer.
+  // Vales são adiantamentos pessoais e NÃO entram por setor.
+  const extras=sang.filter(s=>s.tipo==='extra');
+  const porSetor={};extras.forEach(s=>{(porSetor[s.setor]=porSetor[s.setor]||0);porSetor[s.setor]+=s.valor;});
   const setores=Object.keys(porSetor).sort((a,b)=>porSetor[b]-porSetor[a]);
   const msec=Math.max(1,...setores.map(k=>porSetor[k]));
   document.getElementById('sg-setor').innerHTML=setores.length?setores.map(k=>
     `<button class="brow" style="width:100%;border:none;background:none;cursor:pointer;text-align:left;padding:0" onclick="openDrawer('sang:setor:${encodeURIComponent(k)}')">
       <div class="bname">${k}</div>
-      <div class="btrack"><div class="bfill" style="width:${100*porSetor[k]/msec}%"></div></div>
-      <div class="bval money">${money(porSetor[k])}</div></button>`).join(''):`<div class="empty">${ic('users')}Sem setores no período</div>`;
+      <div class="btrack"><div class="bfill" style="width:${100*porSetor[k]/msec}%;background:linear-gradient(90deg,var(--green),#3cb878)"></div></div>
+      <div class="bval money">${money(porSetor[k])}</div></button>`).join(''):`<div class="empty">${ic('users')}Sem freelancers no período</div>`;
   window.__sang=sang;
   dataTable('sg-table',[{t:'Categoria'},{t:'Setor'},{t:'Pessoa / descrição'},{t:'Data'},{t:'Valor',num:true}],
-    sang.map(s=>[{v:badge(catLabel(s.tipo),tbadge(s.tipo)),s:s.tipo},txt(s.setor),txt(s.pessoa||s.desc||'—'),txt(s.data),num(s.valor)]),{sortIdx:4});
+    sang.map(s=>[{v:badge(catLabel(s.tipo),tbadge(s.tipo)),s:s.tipo},txt(s.tipo==='extra'?s.setor:'—'),txt(s.pessoa||s.desc||'—'),txt(s.data),num(s.valor)]),{sortIdx:4});
 
   /* Cancelamentos */
   const cancArr=A.cancel;const cancV=cancArr.reduce((s,c)=>s+c.valor,0);const alto=cancArr.filter(c=>c.valor>=80);
