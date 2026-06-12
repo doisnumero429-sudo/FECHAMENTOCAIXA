@@ -190,6 +190,79 @@ def parse_produtos_vendidos(sec: str) -> List[Dict[str, Any]]:
     return categorias
 
 
+def parse_produtos_plano(sec: str) -> List[Dict[str, Any]]:
+    """Formato novo: lista plana 'PRODUTO   QTDE' sem categorias/subtotais."""
+    itens = []
+    for line in sec.splitlines():
+        raw = line.rstrip()
+        up = ascii_fold(raw).strip()
+        if not up or up.startswith("=") or up.startswith("PRODUTO") or up.startswith("TOTAL"):
+            continue
+        m = re.match(r"(.+?)\s{2,}(\d+)\s*$", raw)
+        if m and not MONEY_RE.search(raw):
+            itens.append({"produto": m.group(1).strip(), "qtde": int(m.group(2))})
+    return itens
+
+
+def parse_vendas_grupos(sec: str) -> List[Dict[str, Any]]:
+    """'VENDAS POR GRUPOS  QTDE  VALOR' — valor em R$ direto da TOTVS."""
+    itens = []
+    for line in sec.splitlines():
+        up = ascii_fold(line).strip()
+        if not up or up.startswith("=") or up.startswith("VENDAS") or up.startswith("QTDE"):
+            continue
+        m = re.match(r"(.+?)\s+(\d+)\s+(-?[\d.]*\d,\d{2})\s*$", line)
+        if m:
+            itens.append({"grupo": m.group(1).strip(), "qtde": int(m.group(2)),
+                          "valor": money_br(m.group(3)) or 0.0})
+    return itens
+
+
+def parse_venda_hora(sec: str) -> List[Dict[str, Any]]:
+    """'VENDA POR HORA' — hora (0-23) e valor."""
+    out = []
+    for line in sec.splitlines():
+        m = re.match(r"\s*(\d{1,2})\s+(-?[\d.]*\d,\d{2})\s*$", line)
+        if m and int(m.group(1)) <= 23:
+            out.append({"hora": int(m.group(1)), "valor": money_br(m.group(2)) or 0.0})
+    return out
+
+
+def parse_comissoes_garcom(sec: str) -> List[Dict[str, Any]]:
+    """'COMISSOES ATENTENDE' — nome, esperado, realizado."""
+    out = []
+    for line in sec.splitlines():
+        up = ascii_fold(line).strip()
+        if not up or up.startswith("=") or up.startswith("NOME") or up.startswith("COMISSOES"):
+            continue
+        m = re.match(r"(.+?)\s+(-?[\d.]*\d,\d{2})\s+(-?[\d.]*\d,\d{2})\s*$", line)
+        if m:
+            out.append({"nome": m.group(1).strip(),
+                        "esperado": money_br(m.group(2)) or 0.0,
+                        "realizado": money_br(m.group(3)) or 0.0})
+    return out
+
+
+def parse_ticket_setor(sec: str) -> Dict[str, Any]:
+    """'TICKET MEDIO POR SETOR' — pessoas e ticket por balcão/mesa + geral."""
+    out: Dict[str, Any] = {}
+    atual = None
+    for line in sec.splitlines():
+        f = ascii_fold(line)
+        mnum = re.search(r"(\d+)\s*$", line)
+        if "PESSOAS BALCAO" in f and mnum:
+            out["balcao_pessoas"] = int(mnum.group(1)); atual = "balcao"
+        elif "PESSOAS MESA" in f and mnum:
+            out["mesa_pessoas"] = int(mnum.group(1)); atual = "mesa"
+        elif "TOTAL PESSOAS" in f and mnum:
+            out["total_pessoas"] = int(mnum.group(1)); atual = None
+        elif "TICKET MEDIO GERAL" in f:
+            out["ticket_geral"] = last_money(line)
+        elif "VALOR TICKET MEDIO" in f and atual:
+            out[atual + "_ticket"] = last_money(line)
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Parser do FECHAMENTO completo
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,9 +305,22 @@ def parse_fechamento(text: str) -> Optional[Dict[str, Any]]:
 
     di = text.find("FITA DETALHE")
     detalhe = text[di:] if di >= 0 else text
-    sangrias = parse_lista_valor(slice_between(detalhe, "SANGRIAS\n", "CORTESIAS", "CONTAS CANCELADAS"))
+    sangrias = parse_lista_valor(slice_between(detalhe, "SANGRIAS\n", "ASSINADAS", "CORTESIAS", "CONTAS CANCELADAS"))
+    assinadas = parse_lista_valor(slice_between(detalhe, "ASSINADAS\n", "CORTESIAS", "CONTAS CANCELADAS"))
     cortesias = parse_lista_valor(slice_between(detalhe, "CORTESIAS\n", "CONTAS CANCELADAS", "PRODUTOS CANCELADOS"))
-    produtos = parse_produtos_vendidos(slice_between(detalhe, "PRODUTOS VENDIDOS", "SISTEMA TOTVS", "V.04."))
+    sec_prod = slice_between(detalhe, "PRODUTOS VENDIDOS", "TICKET MEDIO POR SETOR",
+                             "VENDA POR HORA", "COMISSOES", "SISTEMA TOTVS", "V.04.")
+    if "SUB-TOTAL" in sec_prod:
+        produtos = parse_produtos_vendidos(sec_prod)          # formato antigo (por categoria)
+    else:
+        # formato novo: lista plana; o grupo é resolvido depois pelo catálogo
+        produtos = [{"grupo": "", "itens": parse_produtos_plano(sec_prod),
+                     "subtotal_qtde": 0, "subtotal_valor": 0.0}]
+    vendas_grupos = parse_vendas_grupos(slice_between(detalhe, "VENDAS POR GRUPOS", "PRODUTOS VENDIDOS"))
+    venda_hora = parse_venda_hora(slice_between(detalhe, "VENDA POR HORA", "COMISSOES", "SISTEMA TOTVS"))
+    comissoes_garcom = parse_comissoes_garcom(slice_between(detalhe, "COMISSOES ATEN", "SISTEMA TOTVS", "V.04."))
+    ticket_setor = parse_ticket_setor(slice_between(detalhe, "TICKET MEDIO POR SETOR", "VENDA POR HORA", "COMISSOES"))
+    din_sang_m = _grep_line_local(slice_between(text, "ENTRADAS", "BORDERO"), "DINHEIRO + SANGRIAS")
 
     qt_m = re.search(r"QTDE TRANSACOES POS\s+(\d+)", text)
     pess_m = re.search(r"NUMERO PESSOAS\s+(\d+)", text)
@@ -282,16 +368,32 @@ def parse_fechamento(text: str) -> Optional[Dict[str, Any]]:
         "qtde_transacoes": int(qt_m.group(1)) if qt_m else 0,
         "numero_pessoas": int(pess_m.group(1)) if pess_m else 0,
         "sangrias": sangrias,
+        "assinadas": assinadas,
         "cortesias": cortesias,
         "produtos": produtos,
+        "vendas_grupos": vendas_grupos,
+        "venda_hora": venda_hora,
+        "comissoes_garcom": comissoes_garcom,
+        "ticket_setor": ticket_setor,
+        "dinheiro_mais_sangrias": last_money(din_sang_m) if din_sang_m else None,
     }
+
+
+def _grep_line_local(sec: str, needle: str) -> str:
+    nf = ascii_fold(needle)
+    for line in sec.splitlines():
+        if nf in ascii_fold(line):
+            return line
+    return ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Leitura do arquivo de capturas → lista de fechamentos válidos (dedup)
 # ─────────────────────────────────────────────────────────────────────────────
 def split_capturas(raw: str) -> List[str]:
-    """Cada captura fica entre linhas de 80 '='; corpo após a régua de 80 '-'."""
+    """Cada captura fica entre linhas de 80 '='; corpo após a régua de 80 '-'.
+    Se o arquivo for uma fita solta (sem cabeçalhos de captura), trata o
+    conteúdo inteiro como um único corpo."""
     blocos = re.split(r"\n={80}\n", raw)
     corpos = []
     for b in blocos:
@@ -299,6 +401,8 @@ def split_capturas(raw: str) -> List[str]:
             continue
         partes = re.split(r"-{80}", b, maxsplit=1)
         corpos.append(partes[1] if len(partes) > 1 else b)
+    if not corpos and raw.strip():
+        corpos = [raw]
     return corpos
 
 
